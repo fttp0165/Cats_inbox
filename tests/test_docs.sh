@@ -13,6 +13,15 @@
 set -u
 cd "$(dirname "$0")/.."   # 一律回到 repo 根目錄執行,路徑斷言才穩定
 
+# 直譯器由 run_all.sh 傳入(export PY);單獨執行本檔時自己找一次。
+# 理由同 run_all.sh:Windows 的 Git Bash 通常只有 `python`,寫死 `python3` 會讓
+# 「HTML 是否漂移」這條檢查在 Windows 上永遠失敗,而症狀看起來像文件真的漂移了。
+if [ -z "${PY:-}" ]; then
+  for c in python3 python py; do
+    if command -v "$c" >/dev/null 2>&1; then PY="$c"; break; fi
+  done
+fi
+
 PASS=0
 FAIL=0
 
@@ -75,10 +84,12 @@ done
 
 echo "[5] md ↔ HTML 未漂移(第四條6:HTML 由 render_docs.py 產生)"
 if [ -f tools/render_docs.py ]; then
-  if python3 tools/render_docs.py --check >/dev/null 2>&1; then
+  if [ -z "${PY:-}" ]; then
+    ng "tools/render_docs.py --check" "找不到 python3 / python / py,無法驗證 HTML 是否同步"
+  elif "$PY" tools/render_docs.py --check >/dev/null 2>&1; then
     ok "render_docs.py --check 通過(HTML 與 md 同步)"
   else
-    ng "tools/render_docs.py --check" "HTML 與 md 內容漂移,重跑 python3 tools/render_docs.py"
+    ng "tools/render_docs.py --check" "HTML 與 md 內容漂移,重跑 $PY tools/render_docs.py"
   fi
 else
   ng "tools/render_docs.py" "工具不存在"

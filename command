@@ -1,0 +1,1 @@
+/tmp/claude-0/-home-user/228a3b8a-e4c7-51c6-b90e-e9f6d21410c7/scratchpad/fakebin/command

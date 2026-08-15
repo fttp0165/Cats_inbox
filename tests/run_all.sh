@@ -7,6 +7,16 @@
 set -u
 cd "$(dirname "$0")"
 
+# 🔴 直譯器要用找的,不能寫死 `python3`:Windows 的 Git Bash 通常只有 `python`
+#    (`py` 是 Windows launcher)。寫死的話整個 pytest 群組在 Windows 上一律失敗,
+#    而訊息是「python3: command not found」——看起來像對方環境壞了,
+#    實際上是我們的腳本挑錯直譯器。開發者在哪個 OS 不該影響測試跑不跑得動。
+PY=""
+for c in python3 python py; do
+  if command -v "$c" >/dev/null 2>&1; then PY="$c"; break; fi
+done
+export PY
+
 TOTAL=0
 FAILED=0
 
@@ -28,7 +38,10 @@ if ls test_*.py >/dev/null 2>&1; then
   echo "=========================================="
   echo "▶ pytest"
   echo "=========================================="
-  if python3 -m pytest -q . ; then
+  if [ -z "$PY" ]; then
+    echo "▶ pytest 失敗:找不到 python3 / python / py,請確認 Python 已安裝且在 PATH 上"
+    FAILED=$((FAILED+1))
+  elif "$PY" -m pytest -q . ; then
     echo "▶ pytest 通過"
   else
     echo "▶ pytest 失敗(若為 ModuleNotFoundError:pip install -r requirements-dev.txt)"
