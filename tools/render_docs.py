@@ -42,6 +42,7 @@ ASSETS = ROOT / "docs" / "assets"
 TARGETS = [
     ROOT / "docs" / "開發計畫書.md",
     ROOT / "docs" / "任務表.md",
+    ROOT / "docs" / "TDD測試計畫表.md",
     ROOT / "README.md",
 ]
 

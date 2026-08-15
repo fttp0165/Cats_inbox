@@ -1,0 +1,5 @@
+# cats-inbox 執行期依賴(釘版本:重建必須得到同一份東西)
+fastapi==0.141.1
+uvicorn[standard]==0.34.0
+jinja2==3.1.5
+itsdangerous==2.2.0

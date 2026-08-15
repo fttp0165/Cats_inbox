@@ -1,0 +1,5 @@
+# 開發/CI 專用依賴(測試才需要,不進執行期映像)
+-r requirements.txt
+pytest==9.1.1
+httpx==0.28.1
+pyyaml==6.0.1

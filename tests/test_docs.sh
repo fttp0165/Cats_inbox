@@ -35,22 +35,31 @@ if [ -f CLAUDE.md ]; then
   ok "CLAUDE.md 存在"
   grep -q "cats-inbox" CLAUDE.md && ok "附錄 A 已填 cats-inbox" \
     || ng "CLAUDE.md" "附錄 A 未特化(找不到 cats-inbox)"
+  # 憲法自己也是文件,第七條一體適用——改憲法時忘了升版是最容易發生的事
+  check_meta CLAUDE.md
+  # 第九條11:指令必須標明「在哪裡下」;A.4 必須填上本專案的實際值,否則條文無從執行
+  grep -q "【機器】【路徑】【專案】" CLAUDE.md \
+    && ok "第九條11 指令位置標示格式在案" \
+    || ng "CLAUDE.md" "缺第九條11 的 【機器】【路徑】【專案】 格式"
+  grep -q "CATS VM" CLAUDE.md \
+    && ok "A.4 已填指令位置的實際值" \
+    || ng "CLAUDE.md" "A.4 未填機器/路徑實際值(條文無法執行)"
 else
   ng "CLAUDE.md" "檔案不存在"
 fi
 
 echo "[2] 正式文件鏈:md 權威版存在且合第七條"
-for f in docs/開發計畫書.md docs/任務表.md README.md; do
+for f in docs/開發計畫書.md docs/任務表.md docs/TDD測試計畫表.md README.md; do
   if [ -f "$f" ]; then check_meta "$f"; else ng "$f" "檔案不存在"; fi
 done
 
 echo "[3] 正式文件 HTML 發布版存在(第四條4)"
-for f in docs/開發計畫書.html docs/任務表.html README.html; do
+for f in docs/開發計畫書.html docs/任務表.html docs/TDD測試計畫表.html README.html; do
   [ -f "$f" ] && ok "$f 存在" || ng "$f" "HTML 版不存在(第四條4:md+HTML 並存)"
 done
 
 echo "[4] HTML 為 light 主題、無外部依賴(第四條1/2、契約 §4.10 精神)"
-for f in docs/開發計畫書.html docs/任務表.html README.html; do
+for f in docs/開發計畫書.html docs/任務表.html docs/TDD測試計畫表.html README.html; do
   [ -f "$f" ] || continue
   if grep -q "prefers-color-scheme: *dark" "$f"; then
     ng "$f" "含 prefers-color-scheme: dark(第四條2 禁止)"

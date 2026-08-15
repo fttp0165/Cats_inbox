@@ -1,0 +1,68 @@
+# =============================================================================
+# cats-inbox 部署設定(CATS VM · /opt/cats-inbox)
+#
+# 🔴 網路隔離線(A.3 紅線 + 對齊指南 §5):
+#    只有對外容器 cats-inbox-api 上 cats-edge;cats-inbox-pg 只在自家內部網,
+#    不上 cats-edge、不對主機發布 port。DB 上共用網 = 對全平台可達。
+# 🔴 換版重建後必做:docker exec portal-gateway nginx -s reload
+#    (gateway 在載入時把上游名解析成固定 IP;容器重建換 IP 就 502,
+#     即使容器 healthy、cats-edge 也掛對了——對齊指南 §3.1 第 3 點)
+# =============================================================================
+
+services:
+  cats-inbox-api:
+    # 🔴 prebuilt image,不在正式機編譯;tag 釘版本,不用 latest
+    image: ghcr.io/fttp0165/cats-inbox-api:0.1.0
+    container_name: cats-inbox-api
+    restart: unless-stopped
+    env_file: [.env]
+    # 只 expose 給 gateway,不對主機 publish(全 VM 只有 gateway 對外)
+    expose: ["8080"]
+    healthcheck:
+      # 打不查 DB 的那支端點;slim 映像沒有 curl,用 python 標準庫
+      test: ["CMD", "python", "-c",
+             "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8080/inbox/health', timeout=3).status==200 else 1)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    depends_on:
+      cats-inbox-pg:
+        condition: service_healthy
+    networks:
+      inbox-internal: {}
+      cats-edge:
+        # gateway 設定寫 proxy_pass http://cats-inbox-api:8080,別名必須對得上
+        aliases: [cats-inbox-api]
+
+  cats-inbox-pg:
+    # 平台統一 PostgreSQL 15(資料庫版本紅線);不跨 DB join,互通一律 HTTP API
+    image: postgres:15.8-alpine
+    container_name: cats-inbox-pg
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 20s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    volumes:
+      - inbox-pg-data:/var/lib/postgresql/data
+    # 🔴 只在自家內部網:不上 cats-edge、無 ports
+    networks:
+      inbox-internal: {}
+
+networks:
+  # 自家內部網:api ↔ pg 的隔離線在這裡
+  inbox-internal: {}
+  # 🔴 external + name:指向 portal 已建立的那張共用網,不由本 compose 另建同名網
+  cats-edge:
+    external: true
+    name: cats-edge
+
+volumes:
+  inbox-pg-data: {}

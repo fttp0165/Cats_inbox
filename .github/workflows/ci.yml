@@ -10,7 +10,16 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      # 目前僅文件層測試(含 render_docs --check 防 md/HTML 漂移);
-      # T01 起 test_skeleton.sh 等會自動被 run_all.sh 撿起,CI 設定不必再改。
+
+      - uses: actions/setup-python@v5
+        with:
+          # 對齊執行期映像的 Python 版本,避免「CI 綠、容器裡壞」
+          python-version: "3.13"
+
+      - name: install test dependencies
+        run: pip install -r requirements-dev.txt
+
+      # run_all.sh 同時跑 bash 與 pytest;新增測試檔會自動被撿起,CI 設定不必再改。
+      # 🔴 run_all.sh 在找不到 pytest 時視為失敗而非跳過——「沒跑」不得與「跑過且綠」長得一樣。
       - name: run all tests
         run: bash tests/run_all.sh
