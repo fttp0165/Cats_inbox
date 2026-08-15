@@ -1,0 +1,16 @@
+# CI(憲法第三條2:tests/ 內測試 push/PR 必跑;紅燈照設計改回,嚴禁改測試放水)
+name: ci
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # 目前僅文件層測試(含 render_docs --check 防 md/HTML 漂移);
+      # T01 起 test_skeleton.sh 等會自動被 run_all.sh 撿起,CI 設定不必再改。
+      - name: run all tests
+        run: bash tests/run_all.sh

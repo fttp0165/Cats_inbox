@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>cats-inbox 開發計畫書(站內信/通知中心)</title>
+<style>
+:root { color-scheme: light; }
+body { background:#ffffff; color:#1f2328; margin:0 auto; padding:2rem 1.2rem 4rem;
+       max-width:60rem; line-height:1.65;
+       font-family:-apple-system,"Segoe UI","Noto Sans TC","Microsoft JhengHei",
+                   "PingFang TC",sans-serif; }
+h1 { font-size:1.7rem; border-bottom:2px solid #d0d7de; padding-bottom:.4rem; }
+h2 { font-size:1.35rem; border-bottom:1px solid #d8dee4; padding-bottom:.3rem; margin-top:2.2rem; }
+h3 { font-size:1.12rem; margin-top:1.8rem; }
+h4 { font-size:1rem; margin-top:1.4rem; }
+p, li { overflow-wrap:break-word; }
+a { color:#0b57d0; }
+code { background:#f6f8fa; border:1px solid #e4e8ec; border-radius:4px;
+       padding:.08em .35em; font-size:.92em;
+       font-family:ui-monospace,SFMono-Regular,Consolas,"Noto Sans Mono CJK TC",monospace; }
+pre { background:#f6f8fa; border:1px solid #e4e8ec; border-radius:6px;
+      padding: .8rem 1rem; overflow-x:auto; line-height:1.5; }
+pre code { background:none; border:none; padding:0; }
+blockquote { margin:1rem 0; padding:.5rem 1rem; border-left:4px solid #c9d1d9;
+             background:#f8f9fb; color:#4b535d; }
+blockquote p { margin:.35rem 0; }
+.tablewrap { overflow-x:auto; margin:1rem 0; }
+table { border-collapse:collapse; font-size:.95em; min-width:50%; }
+th, td { border:1px solid #d0d7de; padding:.4rem .65rem; text-align:left; vertical-align:top; }
+th { background:#f6f8fa; }
+tr:nth-child(even) td { background:#fbfcfd; }
+hr { border:none; border-top:1px solid #d0d7de; margin:2rem 0; }
+figure.svg { margin:1.2rem 0; text-align:center; }
+figure.svg svg { max-width:100%; height:auto; }
+</style>
+</head>
+<body>
+<h1>cats-inbox 開發計畫書(站內信/通知中心)</h1>
+<p><strong>建立日期:</strong> 2026-08-15 08:50<br><strong>最後更新:</strong> 2026-08-15 08:50<br><strong>版本:</strong> v1.0</p>
+<blockquote><p><strong>定位:</strong> cats-inbox = Sporton 統一入口平台的站內信/通知中心——系統通知 + 公告(階段一)、人對人站內信(階段二)、<strong>不做即時聊天</strong>。獨立服務,掛 <code>catsapp.sporton.com.tw/inbox/</code>。<br><strong>文件鏈:</strong> 功能上游=cats-portal《站內信通知中心設計規劃》v1.3(what/why)→ <strong>本計畫書</strong>(when/who/how)→ <code>docs/任務表.md</code>(逐任務追蹤)→ <code>docs/dev-logs/</code>(逐任務證據)。<br><strong>權威來源:</strong> 本 repo <code>docs/</code>;紅線=本 repo <code>CLAUDE.md</code> 附錄 A.3 + 上位契約(附錄 A.2)。</p></blockquote>
+<hr>
+<h2>0. TL;DR</h2>
+<ol><li><strong>做什麼:</strong> 全平台訊息中心。各系統把事件推進來、管理員發公告、使用者從入口進收件匣;未讀鈴鐺 30 秒輪詢。收件人一律 IdP 的 <code>sub</code>。</li><li><strong>選址已變更:</strong> 由設計規劃 v1.3 的「掛 compliance_system」改為<strong>獨立 repo/容器</strong>(Benny 2026-08-15 指示,DI-1);功能設計沿用,選址理由與回寫義務見 §1.2。</li><li><strong>怎麼上:</strong> 六個里程碑——M1 骨架 → M2 SSO → M3 通知核心(公告先行)→ M4 掛上入口 → M5 S2S 推送(系統通知開通)→ M6 人對人(階段二)。<strong>依賴最少的先上線</strong>:公告不依賴任何他系統。</li><li><strong>三個閘門不在我方手上:</strong> DI-2 開通政策偏離核可、DI-3 人對人顯示名稱(SSO 契約 §4.2a 現況不允許)、S2S 契約章節定稿(rf-workorder 2026-08-14 已送件排隊)。三者都有先行送件任務,不阻塞前四個里程碑。</li><li><strong>估時:</strong> MVP(M1–M4,公告中心上線)約 <strong>35–47 小時</strong>;M5 再 +7–10 小時;M6 再 +13–19 小時(不含裁決與 portal 側等待)。</li></ol>
+<hr>
+<h2>1. 背景、上游與選址變更</h2>
+<h3>1.1 這個系統是什麼(沿用設計規劃 v1.3 §1)</h3>
+<div class="tablewrap"><table><thead><tr><th>類型</th><th>說明</th><th>納入</th></tr></thead><tbody><tr><td>系統通知</td><td>工單指派、TRF 退回、審核待處理等流程事件自動通知</td><td>✅ 階段一(M5 開通)</td></tr><tr><td>公告 / 廣播</td><td>管理員發全站公告(維護通知、政策更新)</td><td>✅ 階段一(M3–M4 先上線)</td></tr><tr><td>人對人站內信</td><td>同事互寄訊息、對話串</td><td>✅ 階段二(M6,前置 DI-3)</td></tr><tr><td>即時聊天</td><td>已讀狀態、線上狀態、WebSocket 推送</td><td>❌ 不做(CP 值低,沿用 v1.3 結論)</td></tr></tbody></table></div>
+<p>設計規劃 v1.3 的關鍵前提「需要統一身分(SSO)」<strong>已成立</strong>:IdP(Keycloak realm <code>sporton</code>)已上線,upload-program、sporton_core、portal-admin 三個 App 已端到端接入(SSO 契約 v2.7 §9 登記表)。收件人自始採 <code>sub</code>,不需任何帳號對應表。</p>
+<h3>1.2 選址變更(DI-1,已定)——本計畫的第一個決策</h3>
+<p>設計規劃 v1.3 §2 當時選「掛 compliance_system(新增 notifications app)」,並把「獨立通知微服務」標為「未來再議」。<strong>2026-08-15 Benny 指示成立獨立 repo <code>Cats_inbox</code>,在 cats_portal 服務下提供站內通訊——「未來」已到,本計畫書據此改為獨立服務。</strong></p>
+<p>變更理由(記錄下來,供日後檢視這個決策):</p>
+<ol><li><strong>compliance_system 仍在開發中</strong>(portal 憲法系統清單現況欄)。把全平台的訊息中心綁在一個開發中系統的發版節奏上,通知的可用性會被 compliance 的迭代綁架;選址變更後 compliance <strong>零配合工作</strong>,反而卸下了原方案加在它身上的「訊息中心」角色。</li><li><strong>訊息中心天生是入口級服務</strong>:所有系統都推事件進來、入口首頁的鈴鐺打它的 API。獨立的生命週期與回滾邊界,符合平台「各系統獨立 repo/容器、互通一律 HTTP API」紅線。</li><li>當時反對獨立服務的理由是「<strong>對單人維運過度設計</strong>」。緩解:技術棧刻意極簡(FastAPI + PG15,無 Redis、無佇列、無 WebSocket,輪詢不推播),部署形態照抄 upload-program 已驗證的模式(同為 FastAPI 獨立服務、confidential client、子路徑掛載)。</li><li><strong>退路保留</strong>:資料模型與 API 契約沿用設計規劃 v1.3 §4–§5 原案。若獨立維運被實測證明過重,併回 compliance 的遷移成本=搬四張表+改 upstream,原案隨時可退。</li></ol>
+<p>🔴 <strong>回寫義務(憲法第二條5 同型):</strong> 選址是設計規劃 v1.3 的實質內容,變更必須回寫該文件並升版,不得讓 portal repo 留著已知過期的選址結論——列為 <strong>T02</strong>(cats-portal 側 PR,由本專案發起、portal 收錄)。</p>
+<h3>1.3 與 portal 各交付物的關係</h3>
+<div class="tablewrap"><table><thead><tr><th>portal 側</th><th>cats-inbox 的關係</th></tr></thead><tbody><tr><td>portal-gateway</td><td>唯一入口;<code>/inbox/</code> 路由設定的權威在 cats-portal repo(對齊指南 §4),T11 走 PR</td></tr><tr><td>portal-landing</td><td>未讀鈴鐺掛在首頁,每 30s 輪詢本服務 <code>unread-count</code>(T12,portal 側施工、本專案提供 API)</td></tr><tr><td>Keycloak(<code>/auth/</code>)</td><td>本服務的唯一身分來源;client 申請走 SSO 契約 §5(T03)</td></tr><tr><td>portal-admin</td><td>職責不重疊:portal-admin 管帳號開通,cats-inbox 管訊息;本服務自己的角色後台只管 inbox 內角色</td></tr></tbody></table></div>
+<hr>
+<h2>2. 上位契約對齊(cats-inbox 的落點)</h2>
+<h3>2.1 SSO 接入(《帳號系統接入契約》v2.7)</h3>
+<div class="tablewrap"><table><thead><tr><th>契約義務</th><th>cats-inbox 落點</th></tr></thead><tbody><tr><td>client 型別(§5.1)</td><td><strong>confidential + PKCE</strong>(第一列:後端接 callback 換 token 的伺服器端應用)</td></tr><tr><td>redirect URI(§4.1)</td><td><code>https://catsapp.sporton.com.tw/inbox/oidc/callback/</code>——⚠ 子路徑前綴必須含,§4.1 已載明照舊字面登記會漏掉、且只在登入當下才發現</td></tr><tr><td>session 形態聲明(§10.2,申請必填)</td><td><strong>cookie / 伺服器 session</strong> → front-channel logout 端點為 <strong>MUST</strong></td></tr><tr><td>SLO 端點(§10.3)</td><td><code>GET /inbox/oidc/frontchannel-logout</code>:免認證、冪等、只准刪 cookie、回 204、<code>iss</code>/<code>sid</code> 帶與不帶都要能處理</td></tr><tr><td>伺服器端算繪陷阱(§3.3)</td><td>access token 300s、SSO session 10h:<strong>伺服器端必須以 refresh_token 主動續期</strong>,否則登入 5 分鐘後靜默變未登入;測試替身不得抹平過期行為</td></tr><tr><td>容器內端點(§2.4)</td><td>伺服器端走內部位址(<code>OIDC_INTERNAL_BASE</code>),<strong><code>iss</code> 維持對外網址不改</strong></td></tr><tr><td>token 驗證(§3.2)</td><td>RS256 only;JWKS 快取 1h、支援 kid 輪替;驗 <code>iss</code>/<code>aud</code>(=client_id)/<code>exp</code>;±30s;驗失敗 401、未開通 403</td></tr><tr><td>身分落地(§4.2)</td><td>本地 user 表只存 <code>sub</code> + 本地角色;<code>name</code> claim 可能不存在,一律 fallback 到 <code>sub</code></td></tr><tr><td>首登(§4.3)</td><td>自動建 user(零角色)→ 403 待開通頁,<strong>頁上顯示本人 <code>sub</code></strong>(雞生蛋解法);bootstrap 管理員清單<strong>每次登入比對</strong>、idempotent、disabled 不復活</td></tr><tr><td>同源義務(§4.10)</td><td>cookie <code>Path=/inbox/</code> + HttpOnly + SameSite=Lax;CSP <code>default-src 'self'</code> + nonce;base path=<code>/inbox/</code>;<strong>零外部 CDN</strong>(Bootstrap 自行託管);token 不進 localStorage</td></tr><tr><td>停用能力(§1.1/D9)</td><td>inbox 本地角色可單獨停用;不把「這個人還能不能用」唯一押在 IdP 帳號狀態</td></tr><tr><td>註冊/密碼(§4.8)</td><td>全部指向 IdP 內建流程;本服務零註冊頁、零密碼欄</td></tr><tr><td>帳號紀律(§6 通用建議)</td><td>開啟 OIDC 後<strong>不從自己後台手建人員帳號</strong>(避免同一人兩列);本地不留 break-glass 帳號——鎖死風險由 §4.3 的 bootstrap 清單機制承擔</td></tr></tbody></table></div>
+<h3>2.2 gateway 對齊(《App服務對齊指南》v1.3)</h3>
+<div class="tablewrap"><table><thead><tr><th>指南要求</th><th>cats-inbox 落點</th></tr></thead><tbody><tr><td>對外容器上 <code>cats-edge</code>(§2 治本寫法)</td><td><code>cats-inbox-api</code> 在自家 compose 宣告 <code>cats-edge</code>(<code>external: true</code> + <code>name: cats-edge</code>),alias=<code>cats-inbox-api</code></td></tr><tr><td>DB 隔離(§5)</td><td><code>cats-inbox-pg</code> 只在自家內部網;不上 <code>cats-edge</code>、不對主機發布 port</td></tr><tr><td>路由權威(§4)</td><td><code>/inbox/</code> → <code>cats-inbox-api:8080</code>,在 <strong>cats-portal</strong> 提 PR;附 proxy_headers(X-Real-IP / X-Forwarded-For / Host)</td></tr><tr><td>部署紀律(§3)</td><td>換版重建後必 <code>docker exec portal-gateway nginx -s reload</code>(gateway 快取上游 IP);<code>.env</code> 設 <code>COMPOSE_FILE</code> 封「同目錄第二份 compose」的坑</td></tr><tr><td>gateway 變更紅線(§5)</td><td>低峰 + 容器內 <code>nginx -t</code> + 備份 + 可回滾;不得中斷 PLM/AES 正式站</td></tr></tbody></table></div>
+<h3>2.3 契約缺口(誠實列出——這三件事現行契約沒有給路,不得假裝已解)</h3>
+<ol><li><strong>人對人寄件人顯示名稱(擋階段二,DI-3)。</strong> §4.2a L1 允許快取 <code>name</code>,但明文「<strong>僅供管理後台顯示;不出現在一般使用者可見頁面、不進 API 回應</strong>」——收件匣對一般使用者顯示寄件人姓名<strong>不在現行契約允許範圍</strong>,而只顯示 <code>sub</code> 的站內信沒有可用性。階段二動工前必須向 portal 送申請取得裁決(援 upload-program「申請書→裁決文件」前例;§4.2a 自己也預告了重開條件:「第二個 App 出現同樣需求,那就不是特例,而是本條需要重新設計」——cats-inbox 就是那個第二個 App)。提案方向見 §5 DI-3。<strong>未裁決前,M6 不動工;階段一(系統通知+公告)刻意設計成零人名需求</strong>(§3.6)。</li><li><strong>S2S 憑證(擋系統通知推送,M5)。</strong> 推送 API 的呼叫方驗證=Keycloak <code>client_credentials</code>,但 SSO 契約 §6 的 S2S 章節「首個需求出現時補」——rf-workorder 已於 2026-08-14 送件、報告產生系統排隊中,<strong>cats-inbox 是第三個需求,且角色相反:前兩案是「呼叫方申請憑證」,本案是「被呼叫方要求驗證規格」</strong>(audience/scope 怎麼切、inbox 如何辨識來源系統)。T13 把本服務的需求送進該章節的規格討論,一次定完。章節未定稿前,推送端點不對外開放(A.3 自我加嚴)。</li><li><strong>開通政策(影響全部里程碑的可用性,DI-2)。</strong> 契約 §4.3/4.4 的 deny-by-default 是 MUST:首登零角色→403 待開通。對 inbox 而言「讀自己的收件匣」是自我範圍資料(只能讀 <code>recipient_sub == 自己</code>),逐人手動開通=206 人排隊等著看通知,體感像壞掉(§4.2a D7-7 裁決自己也記載了這個代價)。<strong>提案:讀自己收件匣+標已讀=首登自動授 <code>reader</code> 角色;人對人寄信、公告發布維持 deny-by-default 手動開通</strong>(防自助註冊帳號濫發)。此為對契約 MUST 的偏離,需 portal/Benny 核可(前例:upload-program 首頁落地頁是「唯一經核准的偏離」,程序可循)。<strong>未核可前照契約全 deny,不先斬後奏。</strong></li></ol>
+<hr>
+<h2>3. 系統設計概要</h2>
+<h3>3.1 架構</h3>
+<figure class="svg"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 620" font-family="-apple-system,'Segoe UI','Noto Sans TC','Microsoft JhengHei',sans-serif" font-size="13">
+  <!-- cats-inbox 架構總覽(light 主題、無外部依賴;憲法第四條5) -->
+  <rect width="900" height="620" fill="#ffffff"/>
+  <text x="450" y="28" text-anchor="middle" font-size="16" font-weight="bold" fill="#1f2328">cats-inbox 架構總覽(掛統一入口 /inbox/)</text>
+
+  <!-- 使用者瀏覽器 -->
+  <rect x="360" y="46" width="180" height="40" rx="6" fill="#eef4fb" stroke="#4a6785" stroke-width="1.5"/>
+  <text x="450" y="71" text-anchor="middle" fill="#1f2328">使用者瀏覽器</text>
+
+  <!-- browser -> gateway -->
+  <line x1="450" y1="86" x2="450" y2="118" stroke="#4a6785" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <text x="462" y="106" fill="#57606a" font-size="11">https(全 VM 只開 80/443)</text>
+
+  <!-- gateway -->
+  <rect x="180" y="120" width="540" height="46" rx="6" fill="#fdf3e4" stroke="#b95000" stroke-width="1.5"/>
+  <text x="450" y="141" text-anchor="middle" font-weight="bold" fill="#1f2328">portal-gateway(全 VM 唯一入口,portal 擁有)</text>
+  <text x="450" y="158" text-anchor="middle" font-size="11" fill="#57606a">路由權威:cats-portal gateway/nginx/conf.d/default.conf</text>
+
+  <!-- cats-edge 虛線框 -->
+  <rect x="40" y="196" width="820" height="210" rx="8" fill="none" stroke="#8c959f" stroke-width="1.2" stroke-dasharray="7 5"/>
+  <text x="58" y="216" font-size="11" fill="#57606a">external network:cats-edge(只有各系統的「對外容器」在此)</text>
+
+  <!-- gateway 分流線 -->
+  <line x1="290" y1="166" x2="150" y2="238" stroke="#8c959f" stroke-width="1.2" marker-end="url(#arrowg)"/>
+  <line x1="390" y1="166" x2="330" y2="238" stroke="#8c959f" stroke-width="1.2" marker-end="url(#arrowg)"/>
+  <line x1="520" y1="166" x2="540" y2="238" stroke="#1a7f37" stroke-width="2" marker-end="url(#arrowb)"/>
+  <line x1="640" y1="166" x2="750" y2="238" stroke="#8c959f" stroke-width="1.2" marker-end="url(#arrowg)"/>
+  <text x="185" y="232" font-size="11" fill="#57606a">/</text>
+  <text x="345" y="228" font-size="11" fill="#57606a">/auth/</text>
+  <text x="555" y="228" font-size="11" font-weight="bold" fill="#1a7f37">/inbox/</text>
+  <text x="712" y="228" font-size="11" fill="#57606a">/compliance/ /core/ /plm/ /upload/</text>
+
+  <!-- landing -->
+  <rect x="75" y="240" width="150" height="56" rx="6" fill="#f6f8fa" stroke="#4a6785"/>
+  <text x="150" y="264" text-anchor="middle" fill="#1f2328">portal-landing</text>
+  <text x="150" y="282" text-anchor="middle" font-size="11" fill="#57606a">入口首頁+未讀鈴鐺</text>
+
+  <!-- keycloak -->
+  <rect x="255" y="240" width="150" height="56" rx="6" fill="#f6f8fa" stroke="#4a6785"/>
+  <text x="330" y="264" text-anchor="middle" fill="#1f2328">Keycloak(IdP)</text>
+  <text x="330" y="282" text-anchor="middle" font-size="11" fill="#57606a">realm sporton · OIDC</text>
+
+  <!-- cats-inbox-api -->
+  <rect x="460" y="240" width="170" height="66" rx="6" fill="#e8f4ec" stroke="#1a7f37" stroke-width="2"/>
+  <text x="545" y="263" text-anchor="middle" font-weight="bold" fill="#1f2328">cats-inbox-api</text>
+  <text x="545" y="281" text-anchor="middle" font-size="11" fill="#57606a">FastAPI+Jinja2(本專案)</text>
+  <text x="545" y="297" text-anchor="middle" font-size="11" fill="#57606a">只 expose 8080,不 publish</text>
+
+  <!-- 其他系統 -->
+  <rect x="680" y="240" width="150" height="56" rx="6" fill="#f6f8fa" stroke="#4a6785"/>
+  <text x="755" y="264" text-anchor="middle" fill="#1f2328">各既有系統</text>
+  <text x="755" y="282" text-anchor="middle" font-size="11" fill="#57606a">compliance/core/PLM/upload</text>
+
+  <!-- 輪詢 -->
+  <path d="M 150 296 L 150 350 L 460 350 L 460 306" fill="none" stroke="#4a6785" stroke-width="1.2" stroke-dasharray="4 4" marker-end="url(#arrow)"/>
+  <text x="250" y="344" font-size="11" fill="#4a6785">每 30 秒輪詢 GET /inbox/api/v1/unread-count</text>
+
+  <!-- S2S 推送 -->
+  <path d="M 755 296 L 755 378 L 630 378 L 630 306" fill="none" stroke="#b95000" stroke-width="1.5" stroke-dasharray="6 4" marker-end="url(#arrowo)"/>
+  <text x="646" y="372" font-size="11" fill="#b95000">S2S 推送(client_credentials,M5;契約章節定稿後開放)</text>
+
+  <!-- OIDC 線 -->
+  <path d="M 405 268 L 460 268" fill="none" stroke="#4a6785" stroke-width="1.2" stroke-dasharray="2 3" marker-end="url(#arrow)"/>
+  <text x="408" y="258" font-size="10" fill="#4a6785">OIDC</text>
+
+  <!-- inbox 內部網 -->
+  <rect x="430" y="440" width="300" height="120" rx="8" fill="none" stroke="#8c959f" stroke-width="1.2" stroke-dasharray="7 5"/>
+  <text x="448" y="462" font-size="11" fill="#57606a">inbox 內部網(不上 cats-edge)</text>
+  <line x1="545" y1="306" x2="545" y2="478" stroke="#1a7f37" stroke-width="1.5" marker-end="url(#arrowb)"/>
+
+  <!-- pg -->
+  <rect x="460" y="480" width="240" height="60" rx="6" fill="#f6f8fa" stroke="#4a6785" stroke-width="1.5"/>
+  <text x="580" y="505" text-anchor="middle" fill="#1f2328">cats-inbox-pg(PostgreSQL 15)</text>
+  <text x="580" y="524" text-anchor="middle" font-size="11" fill="#57606a">不上 cats-edge、不對主機發布 port</text>
+
+  <!-- 註解 -->
+  <text x="60" y="590" font-size="11" fill="#57606a">身分:業務庫只存 sub(SSO 契約 v2.7)· 訊息 body 純文字+跳脫 · action_url 同站白名單 · 階段一 UI 零人名(§4.2a 缺口見計畫書 §2.3)</text>
+
+  <defs>
+    <marker id="arrow" markerWidth="9" markerHeight="9" refX="7" refY="3.5" orient="auto"><path d="M0,0 L7,3.5 L0,7 Z" fill="#4a6785"/></marker>
+    <marker id="arrowg" markerWidth="9" markerHeight="9" refX="7" refY="3.5" orient="auto"><path d="M0,0 L7,3.5 L0,7 Z" fill="#8c959f"/></marker>
+    <marker id="arrowb" markerWidth="9" markerHeight="9" refX="7" refY="3.5" orient="auto"><path d="M0,0 L7,3.5 L0,7 Z" fill="#1a7f37"/></marker>
+    <marker id="arrowo" markerWidth="9" markerHeight="9" refX="7" refY="3.5" orient="auto"><path d="M0,0 L7,3.5 L0,7 Z" fill="#b95000"/></marker>
+  </defs>
+</svg>
+</figure>
+<p>三段資料流(沿用設計規劃 v1.3 §3):<strong>① 事件來源</strong>(各系統走 S2S、使用者/管理員走 JWT)推送 → <strong>② cats-inbox</strong> 存 → <strong>③ 前端</strong>輪詢顯示未讀鈴鐺與收件匣。</p>
+<h3>3.2 容器與網路</h3>
+<div class="tablewrap"><table><thead><tr><th>容器</th><th>內容</th><th>網路</th><th>port</th></tr></thead><tbody><tr><td><code>cats-inbox-api</code></td><td>FastAPI + Jinja2(伺服器端算繪),prebuilt image、non-root、健康檢查 <code>/inbox/health</code>(不查 DB)、restart policy</td><td><code>cats-edge</code>(external)+ 自家內部網</td><td>只 <code>expose 8080</code>,不 publish</td></tr><tr><td><code>cats-inbox-pg</code></td><td>PostgreSQL 15(平台版本紅線),volume 持久化</td><td><strong>只在自家內部網</strong></td><td>不對主機發布</td></tr></tbody></table></div>
+<h3>3.3 資料模型(沿用設計規劃 v1.3 §4,微調)</h3>
+<p>四張表,<strong>皆只存 <code>sub</code>,無 email/姓名/密碼欄</strong>(唯 <code>app_user.display_name</code> 為 §4.2a L1 快取,限管理後台顯示):</p>
+<div class="tablewrap"><table><thead><tr><th>表</th><th>欄位要點</th></tr></thead><tbody><tr><td><code>app_user</code></td><td><code>sub</code>(unique、不可變)、本地角色、<code>display_name</code>(nullable,L1 快取:僅自本人登入 token 寫入、附整批清除工具)、created_at、last_login_at</td></tr><tr><td><code>message</code></td><td>id(UUID)、<code>recipient_sub</code>、<code>sender_sub</code>(null=系統)、category(<code>system</code>/<code>direct</code>)、subject、body(<strong>純文字</strong>)、<code>action_url</code>(nullable,🔴 同站白名單)、<code>source_app</code>、<code>thread_id</code>(nullable,階段二)、is_read/read_at、created_at(後端產生,不信前端)</td></tr><tr><td><code>announcement</code></td><td>id、author_sub、title、body、audience(<code>all</code>;分群留待 N1)、starts_at/ends_at、created_at</td></tr><tr><td><code>announcement_read</code></td><td>announcement_id、user_sub、read_at(公告一則對多人,已讀逐人記,不逐人複製列)</td></tr></tbody></table></div>
+<p>migration 用 Alembic;每條 migration 必附 backward,發版前本機 up→down→up 演練(憲法第八條6)。</p>
+<h3>3.4 API 契約(沿用設計規劃 v1.3 §5;實作時以 OpenAPI 為權威)</h3>
+<div class="tablewrap"><table><thead><tr><th>端點</th><th>認證</th><th>用途</th></tr></thead><tbody><tr><td><code>POST /inbox/api/v1/notifications</code></td><td><strong>S2S token</strong>(M5 起)</td><td>各系統推事件(recipient_sub、subject、body、action_url、source_app)</td></tr><tr><td><code>GET /inbox/api/v1/notifications?unread=1</code></td><td>使用者 session/JWT</td><td>我的訊息列表</td></tr><tr><td><code>GET /inbox/api/v1/unread-count</code></td><td>使用者 session/JWT</td><td>未讀數(鈴鐺輪詢,30s)</td></tr><tr><td><code>POST /inbox/api/v1/notifications/{id}/read</code></td><td>使用者 session/JWT</td><td>標已讀(冪等)</td></tr><tr><td><code>GET /inbox/api/v1/announcements/active</code></td><td>使用者 session/JWT</td><td>目前有效公告</td></tr><tr><td><code>POST /inbox/api/v1/announcements</code></td><td>使用者 session/JWT + <code>announcer</code> 角色</td><td>發公告</td></tr><tr><td><code>POST /inbox/api/v1/messages</code></td><td>使用者 session/JWT + <code>sender</code> 角色</td><td>階段二:寄站內信(<code>sender_sub</code> 一律取自 token)</td></tr><tr><td><code>GET /inbox/health</code></td><td>免認證</td><td>健康檢查,不查 DB</td></tr><tr><td><code>GET /inbox/oidc/frontchannel-logout</code></td><td>免認證(§10.3)</td><td>SLO:清 session cookie、204、冪等</td></tr></tbody></table></div>
+<p>錯誤語意:401=token 無效;403=已認證未授權(含待開通);400=輸入不合法(含 action_url 非同站)。</p>
+<h3>3.5 權限模型(deny-by-default)</h3>
+<div class="tablewrap"><table><thead><tr><th>角色</th><th>能做什麼</th><th>授予方式</th></tr></thead><tbody><tr><td>(無角色)</td><td>只有待開通頁(顯示本人 <code>sub</code>)</td><td>首登自動建號</td></tr><tr><td><code>reader</code></td><td>讀自己的收件匣、標已讀、看有效公告</td><td>⏳ DI-2:提案首登自動授;核可前=管理後台手動</td></tr><tr><td><code>announcer</code></td><td>發公告、管公告有效期</td><td>管理後台手動</td></tr><tr><td><code>sender</code>(階段二)</td><td>寄人對人站內信</td><td>管理後台手動(防自助註冊帳號濫發)</td></tr><tr><td><code>admin</code></td><td>派角色、清 L1 快取、看來源系統登記</td><td>bootstrap 清單(每次登入比對)+ 管理後台手動</td></tr></tbody></table></div>
+<p>鐵則:使用者只能讀 <code>recipient_sub == 自己 sub</code> 的訊息,查別人的回 403;<code>sender_sub</code>/身分欄位一律後端自 token 取,前端傳值不採信。</p>
+<h3>3.6 UI 原則</h3>
+<ul><li>伺服器端算繪(Jinja2),base path <code>/inbox/</code>;Bootstrap 5 <strong>自行託管</strong>(對齊 portal Bootstrap5 導入方向,§4.10 禁 CDN);light 主題。</li><li>body 純文字輸出、一律跳脫;<code>action_url</code> 僅同站(白名單驗證在寫入時就拒,不是輸出時才擋)。</li><li>🔴 <strong>階段一 UI 零人名</strong>:系統通知顯示 <code>source_app</code> 標籤(如「TRF 系統」),公告顯示「平台公告」——不顯示任何個人姓名,使 §4.2a 缺口(DI-3)不擋階段一。</li><li>待開通頁顯示本人 <code>sub</code> 與「找 inbox 管理員開通」指引(§4.3,不是冷 Forbidden)。</li></ul>
+<hr>
+<h2>4. 里程碑(任務細節與逐項驗收見 <code>docs/任務表.md</code>)</h2>
+<div class="tablewrap"><table><thead><tr><th>里程碑</th><th>內容</th><th>任務</th><th>估時</th><th>前置</th></tr></thead><tbody><tr><td><strong>M0 採用與計畫</strong></td><td>憲法 + 本計畫書 + 任務表 + 文件工具 + CI</td><td>T00</td><td>✅ 已完成</td><td>—</td></tr><tr><td><strong>M1 骨架</strong></td><td>可跑的空服務:FastAPI <code>/inbox/health</code>、Dockerfile(non-root、prebuilt)、compose(cats-edge 治本寫法 + PG15)、<code>.env.example</code>、CI 綠</td><td>T01、T02</td><td>6–9 h</td><td>—</td></tr><tr><td><strong>M2 SSO 接入</strong></td><td>client 申請、OIDC 登入(PKCE)、token 驗證、伺服器端續期、首登建號+待開通、角色後台+L1 快取、SLO 端點</td><td>T03–T06</td><td>14–19 h</td><td>M1;client 由 portal 建</td></tr><tr><td><strong>M3 通知核心</strong></td><td>四張表+migration、讀取 API、收件匣 UI、公告發布、XSS/action_url 紅線測試</td><td>T07–T10</td><td>14–19 h</td><td>M2</td></tr><tr><td><strong>M4 掛上入口(公告中心上線)</strong></td><td>gateway 路由 PR、staging 驗證、契約 §7 冒煙(如實打叉未完成項)、landing 鈴鐺協作、低峰上線</td><td>T11、T12</td><td>5–7 h(另 portal 側 3–5 h)</td><td>M3;gateway PR 由 portal 併</td></tr><tr><td><strong>M5 系統通知開通</strong></td><td>S2S 需求送件、推送 API(client_credentials 驗證)、來源系統登記表、第一個來源接入(DI-4)</td><td>T13、T14</td><td>7–10 h</td><td>M4;<strong>S2S 章節定稿</strong></td></tr><tr><td><strong>M6 人對人(階段二)</strong></td><td>DI-3 申請與裁決、direct+thread、寄信 UI+收件人選擇(名冊=已首登使用者,對齊 D7-7)、安全複驗、發版</td><td>T15–T17</td><td>13–19 h</td><td>M5;<strong>DI-3 裁決</strong></td></tr></tbody></table></div>
+<p>排序邏輯:<strong>依賴最少的先上線</strong>。公告(M3–M4)不依賴任何他系統與未定契約;系統通知(M5)等 S2S 章節;人對人(M6)等 DI-3 裁決。每個里程碑結束=可交付、可回滾的增量(憲法第一條)。</p>
+<hr>
+<h2>5. 決策點(DI)與沿用待決議(N)</h2>
+<div class="tablewrap"><table><thead><tr><th>編號</th><th>事項</th><th>狀態</th></tr></thead><tbody><tr><td><strong>DI-1</strong></td><td>選址:獨立服務,取代「掛 compliance」</td><td>✅ <strong>已定</strong>(Benny 2026-08-15 指示);回寫 portal 設計規劃=T02</td></tr><tr><td><strong>DI-2</strong></td><td>開通政策:<code>reader</code> 首登自動授(偏離契約 §4.4 MUST,見 §2.3-3)</td><td>⏳ 待 portal/Benny 核可;<strong>未核可前照契約全 deny</strong></td></tr><tr><td><strong>DI-3</strong></td><td>人對人顯示名稱:提案「寄件當下自寄件人本人 token 取 <code>name</code> 快照存入該則訊息」(仍不碰 Admin API、無背景同步),或 §4.2a 增訂新級別</td><td>⏳ M6 前置;申請書=T15,建議 M4 後即送(裁決期不阻塞 M5)</td></tr><tr><td><strong>DI-4</strong></td><td>第一個推送來源系統:候選=compliance(TRF 退回/工單指派,設計規劃原列的高價值事件)、PLM(批次通知,其 SSO 尚未上線)、upload-program(已上線,事件價值較低)</td><td>⏳ 建議 compliance,於其開發期同步埋點成本最低;待 Benny 拍板</td></tr><tr><td>N1</td><td>人對人是否限營運處/部門(要接群組=另涉 §4.2a L2)</td><td>階段二前決</td></tr><tr><td>N2</td><td>重要通知是否同時寄 Email(SMTP 可共用 Keycloak 的)</td><td>MVP 不做;待決</td></tr><tr><td>N3</td><td>訊息保留期限/封存策略</td><td>上線後 6 個月內定案;先不自動刪</td></tr><tr><td>N4</td><td>收件匣掛哪</td><td>✅ 已由 DI-1 連帶定案:<code>/inbox/</code> 獨立服務(原文件屬意的「入口級」正是本案)</td></tr><tr><td>N5</td><td>未來即時化(SSE)</td><td>先輪詢;使用者實測嫌慢再議</td></tr></tbody></table></div>
+<hr>
+<h2>6. 測試與驗收</h2>
+<ul><li><strong>TDD(憲法第三條):</strong> 每任務先寫紅測試。已有 <code>tests/test_docs.sh</code>(文件層,T00);T01 起加 <code>test_skeleton.sh</code>(compose 結構、.env.example 完整性、容器 non-root)、M2 加 auth 測試(驗簽/aud/過期/±30s、首登建號、SLO 端點冪等)、M3 加 API 測試(deny-by-default、XSS 跳脫、action_url 白名單——<strong>白名單測試含反例</strong>:外部網址、<code>javascript:</code>、協定相對 <code>//</code>)、M5 加 S2S 測試(無 token/錯 audience 一律 401)。</li><li><strong>CI:</strong> <code>.github/workflows/ci.yml</code> push/PR 必跑 <code>bash tests/run_all.sh</code>;紅燈照設計改回,嚴禁改測試放水。</li><li><strong>冒煙:</strong> 上線前跑 SSO 契約 §7 清單,<strong>未完成項如實打叉</strong>(契約明文:SLO 測試前必清 cookie/用無痕,否則端點零呼叫與「設定沒套用」無法區分)。</li><li><strong>簽收:</strong> 每里程碑對照 <code>docs/任務表.md</code> 驗收欄逐項打勾,寫進該任務 dev-log。</li></ul>
+<h2>7. 風險登記</h2>
+<div class="tablewrap"><table><thead><tr><th>#</th><th>風險</th><th>緩解</th></tr></thead><tbody><tr><td>R1</td><td><strong>stored XSS</strong>:站內信是「使用者輸入直接展示給其他人」的第一現場,同源之下(§4.10)一次 XSS 可觸及 IdP</td><td>body 純文字+輸出跳脫+嚴格 CSP;紅測試釘住;不支援 HTML 內容(A.3 自我加嚴)</td></tr><tr><td>R2</td><td><strong>通知釣魚</strong>:action_url 外導=拿平台官方 UI 幫外部網址背書</td><td>同站白名單,寫入時即拒(400);測試含反例</td></tr><tr><td>R3</td><td><strong>S2S 章節時程不在我方</strong></td><td>公告先行上線(M3–M4 零依賴);T13 提早送件;端點未有驗證前不部署</td></tr><tr><td>R4</td><td><strong>DI-3 裁決擋階段二</strong></td><td>階段一刻意零人名(§3.6);T15 於 M4 後即送,裁決期跑 M5</td></tr><tr><td>R5</td><td><strong>單人維運負擔</strong>(當初反對獨立服務的理由)</td><td>極簡棧(無 Redis/佇列/WebSocket);退路=併回 compliance,資料模型同源可遷</td></tr><tr><td>R6</td><td><strong>伺服器端續期陷阱</strong>(§3.3:登入 5 分鐘後靜默未登入;測試替身常抹平過期)</td><td>refresh_token 主動續期列入 T04 驗收;測試替身明訂含過期案例</td></tr></tbody></table></div>
+<h2>8. 對現有服務與資料的影響</h2>
+<ul><li><strong>全程 🟢 為主</strong>:cats-inbox 是新增子路徑+新容器,不動任何既有系統的程式、容器、資料。compliance 因選址變更<strong>卸下</strong>原方案的工作,零配合項。</li><li><strong>唯二 🟡</strong>:T11/T12 的 gateway 路由新增與 reload——依部署形態紅線(低峰 + 容器內 <code>nginx -t</code> + 備份 + 秒級回滾),不得中斷 PLM/AES 正式站;landing 鈴鐺為 portal 側頁面改動,依 portal 憲法辦理。</li><li><strong>本專案資料</strong>:上線前無正式資料;上線後任何 migration 依共通紅線(備份+staging 雙向演練)。</li></ul>
+<hr>
+<h2>版本歷史</h2>
+<div class="tablewrap"><table><thead><tr><th>版本</th><th>日期</th><th>修改人</th><th>摘要</th></tr></thead><tbody><tr><td>v1.0</td><td>2026-08-15</td><td>Claude(Benny)</td><td>初版:記錄選址變更 DI-1(獨立服務取代「掛 compliance」,含理由與 T02 回寫義務);對齊 SSO 契約 v2.7 與 gateway 指南 v1.3 並逐條列 cats-inbox 落點;誠實列出三項契約缺口(§4.2a 顯示名稱、S2S 章節未定稿、開通政策偏離)及其閘門任務;六里程碑 M0–M6、任務 T00–T17 與估時(MVP 35–47 h);決策點 DI-1–DI-4 與沿用待決議 N1–N5;風險登記 R1–R6;影響分級(新服務 🟢、gateway 掛載 🟡)</td></tr></tbody></table></div>
+</body>
+</html>

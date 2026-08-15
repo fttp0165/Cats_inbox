@@ -1,0 +1,48 @@
+# cats-inbox — Sporton 平台站內信/通知中心
+
+**建立日期:** 2026-08-15 08:58
+**最後更新:** 2026-08-15 08:58
+**版本:** v1.0
+
+> 系統通知 + 公告(階段一)、人對人站內信(階段二)、不做即時聊天。
+> 獨立服務,掛統一入口 `catsapp.sporton.com.tw/inbox/`;收件人一律 IdP(Keycloak)的 `sub`。
+
+## 現況
+
+**M0 完成(2026-08-15):** 憲法、開發計畫書、任務表、文件工具、CI 已就位;程式尚未動工,下一個任務是 **T01 服務骨架**。
+
+## 文件鏈(md 為權威,HTML 為發布版)
+
+| 讀什麼 | 位置 |
+|---|---|
+| 開發憲法(最高準則) | `CLAUDE.md` |
+| 開發計畫書(when/who/how) | `docs/開發計畫書.md` |
+| 任務表(逐任務追蹤) | `docs/任務表.md` |
+| 開發日誌(逐任務證據) | `docs/dev-logs/` |
+| 功能上游(what/why) | cats-portal `DOCS/站內信通知中心設計規劃.md` v1.3(選址變更見計畫書 §1.2) |
+
+## 常用指令
+
+跑測試(CI 同入口):
+
+```
+bash tests/run_all.sh
+```
+
+重產正式文件的 HTML 版(第四條;`--check` 只驗同步不寫檔):
+
+```
+python3 tools/render_docs.py
+```
+
+## 技術形態(定案於開發計畫書 §3)
+
+Python 3.13 + FastAPI + Jinja2(伺服器端算繪)+ PostgreSQL 15;容器 `cats-inbox-api`(上 `cats-edge`)+ `cats-inbox-pg`(僅內網);OIDC=Keycloak(confidential + PKCE);未讀鈴鐺 30 秒輪詢,無 Redis/佇列/WebSocket。
+
+---
+
+## 版本歷史
+
+| 版本 | 日期 | 修改人 | 摘要 |
+|---|---|---|---|
+| v1.0 | 2026-08-15 | Claude(Benny) | 初版:專案定位、文件鏈、常用指令、技術形態;M0 完成標記 |

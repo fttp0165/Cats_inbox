@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>cats-inbox — Sporton 平台站內信/通知中心</title>
+<style>
+:root { color-scheme: light; }
+body { background:#ffffff; color:#1f2328; margin:0 auto; padding:2rem 1.2rem 4rem;
+       max-width:60rem; line-height:1.65;
+       font-family:-apple-system,"Segoe UI","Noto Sans TC","Microsoft JhengHei",
+                   "PingFang TC",sans-serif; }
+h1 { font-size:1.7rem; border-bottom:2px solid #d0d7de; padding-bottom:.4rem; }
+h2 { font-size:1.35rem; border-bottom:1px solid #d8dee4; padding-bottom:.3rem; margin-top:2.2rem; }
+h3 { font-size:1.12rem; margin-top:1.8rem; }
+h4 { font-size:1rem; margin-top:1.4rem; }
+p, li { overflow-wrap:break-word; }
+a { color:#0b57d0; }
+code { background:#f6f8fa; border:1px solid #e4e8ec; border-radius:4px;
+       padding:.08em .35em; font-size:.92em;
+       font-family:ui-monospace,SFMono-Regular,Consolas,"Noto Sans Mono CJK TC",monospace; }
+pre { background:#f6f8fa; border:1px solid #e4e8ec; border-radius:6px;
+      padding: .8rem 1rem; overflow-x:auto; line-height:1.5; }
+pre code { background:none; border:none; padding:0; }
+blockquote { margin:1rem 0; padding:.5rem 1rem; border-left:4px solid #c9d1d9;
+             background:#f8f9fb; color:#4b535d; }
+blockquote p { margin:.35rem 0; }
+.tablewrap { overflow-x:auto; margin:1rem 0; }
+table { border-collapse:collapse; font-size:.95em; min-width:50%; }
+th, td { border:1px solid #d0d7de; padding:.4rem .65rem; text-align:left; vertical-align:top; }
+th { background:#f6f8fa; }
+tr:nth-child(even) td { background:#fbfcfd; }
+hr { border:none; border-top:1px solid #d0d7de; margin:2rem 0; }
+figure.svg { margin:1.2rem 0; text-align:center; }
+figure.svg svg { max-width:100%; height:auto; }
+</style>
+</head>
+<body>
+<h1>cats-inbox — Sporton 平台站內信/通知中心</h1>
+<p><strong>建立日期:</strong> 2026-08-15 08:58<br><strong>最後更新:</strong> 2026-08-15 08:58<br><strong>版本:</strong> v1.0</p>
+<blockquote><p>系統通知 + 公告(階段一)、人對人站內信(階段二)、不做即時聊天。<br>獨立服務,掛統一入口 <code>catsapp.sporton.com.tw/inbox/</code>;收件人一律 IdP(Keycloak)的 <code>sub</code>。</p></blockquote>
+<h2>現況</h2>
+<p><strong>M0 完成(2026-08-15):</strong> 憲法、開發計畫書、任務表、文件工具、CI 已就位;程式尚未動工,下一個任務是 <strong>T01 服務骨架</strong>。</p>
+<h2>文件鏈(md 為權威,HTML 為發布版)</h2>
+<div class="tablewrap"><table><thead><tr><th>讀什麼</th><th>位置</th></tr></thead><tbody><tr><td>開發憲法(最高準則)</td><td><code>CLAUDE.md</code></td></tr><tr><td>開發計畫書(when/who/how)</td><td><code>docs/開發計畫書.md</code></td></tr><tr><td>任務表(逐任務追蹤)</td><td><code>docs/任務表.md</code></td></tr><tr><td>開發日誌(逐任務證據)</td><td><code>docs/dev-logs/</code></td></tr><tr><td>功能上游(what/why)</td><td>cats-portal <code>DOCS/站內信通知中心設計規劃.md</code> v1.3(選址變更見計畫書 §1.2)</td></tr></tbody></table></div>
+<h2>常用指令</h2>
+<p>跑測試(CI 同入口):</p>
+<pre><code>bash tests/run_all.sh</code></pre>
+<p>重產正式文件的 HTML 版(第四條;<code>--check</code> 只驗同步不寫檔):</p>
+<pre><code>python3 tools/render_docs.py</code></pre>
+<h2>技術形態(定案於開發計畫書 §3)</h2>
+<p>Python 3.13 + FastAPI + Jinja2(伺服器端算繪)+ PostgreSQL 15;容器 <code>cats-inbox-api</code>(上 <code>cats-edge</code>)+ <code>cats-inbox-pg</code>(僅內網);OIDC=Keycloak(confidential + PKCE);未讀鈴鐺 30 秒輪詢,無 Redis/佇列/WebSocket。</p>
+<hr>
+<h2>版本歷史</h2>
+<div class="tablewrap"><table><thead><tr><th>版本</th><th>日期</th><th>修改人</th><th>摘要</th></tr></thead><tbody><tr><td>v1.0</td><td>2026-08-15</td><td>Claude(Benny)</td><td>初版:專案定位、文件鏈、常用指令、技術形態;M0 完成標記</td></tr></tbody></table></div>
+</body>
+</html>
