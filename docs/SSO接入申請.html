@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>cats-inbox — SSO 接入申請(OIDC client)＋開通政策偏離申請</title>
+<style>
+:root { color-scheme: light; }
+body { background:#ffffff; color:#1f2328; margin:0 auto; padding:2rem 1.2rem 4rem;
+       max-width:60rem; line-height:1.65;
+       font-family:-apple-system,"Segoe UI","Noto Sans TC","Microsoft JhengHei",
+                   "PingFang TC",sans-serif; }
+h1 { font-size:1.7rem; border-bottom:2px solid #d0d7de; padding-bottom:.4rem; }
+h2 { font-size:1.35rem; border-bottom:1px solid #d8dee4; padding-bottom:.3rem; margin-top:2.2rem; }
+h3 { font-size:1.12rem; margin-top:1.8rem; }
+h4 { font-size:1rem; margin-top:1.4rem; }
+p, li { overflow-wrap:break-word; }
+a { color:#0b57d0; }
+code { background:#f6f8fa; border:1px solid #e4e8ec; border-radius:4px;
+       padding:.08em .35em; font-size:.92em;
+       font-family:ui-monospace,SFMono-Regular,Consolas,"Noto Sans Mono CJK TC",monospace; }
+pre { background:#f6f8fa; border:1px solid #e4e8ec; border-radius:6px;
+      padding: .8rem 1rem; overflow-x:auto; line-height:1.5; }
+pre code { background:none; border:none; padding:0; }
+blockquote { margin:1rem 0; padding:.5rem 1rem; border-left:4px solid #c9d1d9;
+             background:#f8f9fb; color:#4b535d; }
+blockquote p { margin:.35rem 0; }
+.tablewrap { overflow-x:auto; margin:1rem 0; }
+table { border-collapse:collapse; font-size:.95em; min-width:50%; }
+th, td { border:1px solid #d0d7de; padding:.4rem .65rem; text-align:left; vertical-align:top; }
+th { background:#f6f8fa; }
+tr:nth-child(even) td { background:#fbfcfd; }
+hr { border:none; border-top:1px solid #d0d7de; margin:2rem 0; }
+figure.svg { margin:1.2rem 0; text-align:center; }
+figure.svg svg { max-width:100%; height:auto; }
+</style>
+</head>
+<body>
+<h1>cats-inbox — SSO 接入申請(OIDC client)＋開通政策偏離申請</h1>
+<p><strong>建立日期:</strong> 2026-08-15 10:45<br><strong>最後更新:</strong> 2026-08-15 10:45<br><strong>版本:</strong> v1.0<br><strong>發文者:</strong> cats-inbox(Sporton 平台站內信/通知中心)<br><strong>收文者:</strong> cats-portal(統一入口平台 / IdP 維護方)<br><strong>依據:</strong> 《帳號系統接入契約(SSO/OIDC)》<strong>v2.7</strong>(2026-08-10)§5、§10;《App服務對齊指南》v1.3;本專案 <code>docs/開發計畫書.md</code> v1.0</p>
+<hr>
+<h2>0. TL;DR(給 portal 的五句話)</h2>
+<ol><li>申請 <strong>confidential</strong> client <code>cats-inbox</code>(PKCE S256 疊加),redirect URI 一條、完整比對、含 <code>/inbox/</code> 前綴。</li><li><strong>session 形態聲明:cookie / 伺服器 session</strong> → 依 §10.3 承擔 front-channel logout 端點義務,路徑已定。</li><li>claims 只要 <code>name</code>(用途受限,見〈參〉);<strong>不申請</strong> <code>email</code>、<strong>不申請</strong> <code>groups</code>。</li><li>隨函一件:<strong>開通政策偏離申請</strong>——「讀自己的收件匣」請准首登自動授 <code>reader</code>,寄信與發公告維持 deny-by-default 手動開通(詳〈伍〉)。<strong>未核可前照契約全 deny,不先斬後奏。</strong></li><li>另預告兩件、本次都不請求:<code>/inbox/</code> 閘道路由(〈肆〉)、S2S 推送驗證規格(〈陸〉,我方為第三個 S2S 需求且角色相反)。</li></ol>
+<hr>
+<h2>壹、client 申請(§5 必填項)</h2>
+<div class="tablewrap"><table><thead><tr><th>項目</th><th>值</th></tr></thead><tbody><tr><td>系統</td><td>cats-inbox — 平台站內信/通知中心(系統通知＋公告;人對人為階段二)</td></tr><tr><td>子路徑</td><td><code>/inbox/</code>(D2″ 單一 hostname 之下)</td></tr><tr><td><code>client_id</code></td><td><code>cats-inbox</code></td></tr><tr><td>型別</td><td>🔴 <strong>confidential</strong>(client secret)＋ <strong>PKCE S256</strong>(兩者疊加,§5.1)</td></tr><tr><td>redirect URI</td><td><code>https://catsapp.sporton.com.tw/inbox/oidc/callback/</code>(僅此一條;完整比對、<strong>無萬用字元</strong>)</td></tr><tr><td>需要的 claims</td><td><code>name</code>(標準 profile)——用途嚴格受限於 §4.2a <strong>L1</strong>,見〈參〉。<code>name</code> 不存在時依 §3.1 fallback 退回 <code>sub</code>,已於實作預留</td></tr><tr><td><strong>不申請</strong> <code>email</code></td><td>本系統無 email 用途:通知一律站內顯示,Email 併寄為 MVP 不做項(N2 待決)。將來若要併寄,依 §8 另行增補</td></tr><tr><td><strong>不申請</strong> <code>groups</code></td><td>授權一律 deny-by-default 本地 RBAC。公告分群(N1)未定案前無使用場景;需要時另行申請,不預先要權限</td></tr><tr><td>S2S</td><td><strong>本次不請求核發</strong>,但本系統將是平台第三個 S2S 需求方,且角色與前兩案相反——詳〈陸〉</td></tr><tr><td>session 形態聲明</td><td>🔴 <strong>cookie / 伺服器 session</strong>(詳〈貳〉)</td></tr><tr><td>窗口</td><td>Benny(cats-inbox 專案)</td></tr></tbody></table></div>
+<p><strong>型別判準(§5.1 v2.1 更正版:判準是「誰執行授權碼交換」,不是「有沒有後端」):</strong><br>本系統為 <strong>FastAPI + Jinja2 伺服器端算繪</strong>,後端有一條路由 <code>GET /inbox/oidc/callback/</code> 接 IdP callback、拿 code 換 token、簽發自己的 HttpOnly cookie session → 落<strong>第一列 confidential</strong>。前端無 JS 執行 OIDC 流程、不持有 token(§4.10:token 不進 <code>localStorage</code>),<strong>非</strong>第三列「SPA + 自家 API 後端」型。</p>
+<blockquote><p>我方已注意 §5.1 的警告:第三列誤設成 confidential <strong>建立時不會報錯、回讀驗證也會過</strong>,直到第一次登入才在 token 端點失敗(portal-admin 前例放了三天沒人發現)。本系統確認是第一列,故請以 confidential 建立。</p></blockquote>
+<hr>
+<h2>貳、session 形態聲明與 SLO 端點(§10)</h2>
+<p><strong>聲明:cookie / 伺服器 session。</strong> 屬 §10.1 第一列,front-channel logout 為 <strong>MUST</strong>,我方承擔。</p>
+<div class="tablewrap"><table><thead><tr><th>項目</th><th>我方承諾(依 §10.3 規格逐項)</th></tr></thead><tbody><tr><td>端點</td><td><code>GET https://catsapp.sporton.com.tw/inbox/oidc/frontchannel-logout</code></td></tr><tr><td>行為</td><td>清除本系統 session cookie,回 <strong>204</strong></td></tr><tr><td>認證</td><td><strong>免認證</strong>(iframe 載入時不帶我方 API token)</td></tr><tr><td>冪等</td><td>重複呼叫、session 已不存在時同樣 204</td></tr><tr><td>副作用</td><td>🔴 <strong>只刪 cookie</strong>;不建 session、不寫業務資料——被任意第三方呼叫的最壞後果=使用者被登出</td></tr><tr><td>參數</td><td><code>iss</code>/<code>sid</code> <strong>帶與不帶都能處理</strong>(我方 session 無狀態比對需求,忽略即可)</td></tr><tr><td>時序</td><td>端點隨我方 T06 實作;<strong>上線後知會 portal</strong> 登記 <code>frontchannel.logout.url</code> 並回讀驗證(§10.3 時序不敏感)</td></tr></tbody></table></div>
+<p>cookie 屬性依 §4.10 同源義務:<code>Path=/inbox/</code> + <code>HttpOnly</code> + <code>SameSite=Lax</code> + <code>Secure</code>。</p>
+<p><strong>冒煙承諾:</strong> 上線前依 §7 逐項驗證,登出拆「我方發起 / IdP 發起」兩條;<br>IdP 發起項 🔴 <strong>測試前必清本系統 cookie 或用無痕視窗</strong>(§10.7:不清的話舊 cookie 直接放行、沒走 OIDC 交換,IdP 手上沒有我方 client session 可通知,<strong>端點零呼叫的症狀與「設定沒套用」完全無法區分</strong>——sporton_core 與 portal 為此各花了數小時)。此點已寫入我方 <code>docs/TDD測試計畫表.md</code> 的 T12 驗收要點。</p>
+<hr>
+<h2>參、<code>name</code> claim 的用途聲明(§4.2a L1,自我設限)</h2>
+<p>我方業務庫依 §4.2 <strong>只存 <code>sub</code> + 本地角色</strong>。申請 <code>name</code> 僅為<strong>管理後台</strong>辨識使用者(派角色時看得出來是誰),完全落在 §4.2a <strong>L1</strong> 條件內:</p>
+<div class="tablewrap"><table><thead><tr><th>L1 條件</th><th>我方落實</th></tr></thead><tbody><tr><td>僅自本人登入的 ID token 取得;不呼叫 Admin API</td><td>✅ 僅登入時寫入</td></tr><tr><td>每次登入覆寫、無背景同步</td><td>✅</td></tr><tr><td><strong>僅供管理後台顯示</strong>,不出現在一般使用者可見頁面、不進 API 回應</td><td>✅ 見下方紅字</td></tr><tr><td>不得作為任何授權判斷依據</td><td>✅ 授權只認當次 token 與本地角色</td></tr><tr><td>不進 log</td><td>✅(我方另有自我加嚴:訊息主旨與內容亦不進 log)</td></tr><tr><td>欄位 nullable,為空不阻斷功能</td><td>✅ 退回顯示 <code>sub</code></td></tr><tr><td>提供整批清除工具、涵蓋孤兒快取</td><td>✅ 列入 T05 驗收</td></tr></tbody></table></div>
+<p>🔴 <strong>我方主動聲明一個限制,並據此調整了產品設計:</strong><br>站內信的收件匣若對一般使用者顯示寄件人姓名,<strong>牴觸 L1 第 3 條</strong>(不得出現在一般使用者可見頁面)。因此<strong>階段一(系統通知＋公告)刻意設計為零人名</strong>——通知顯示來源系統標籤(如「TRF 系統」)、公告顯示「平台公告」。<br>人對人站內信(階段二)確實需要顯示寄件人是誰,那<strong>現行契約沒有給路</strong>;我方將於階段一穩定後另案提出契約增修申請(暫定提案:寄件當下自<strong>寄件人本人</strong>的 token 取 <code>name</code> 寫入該則訊息作為快照,不同步、不查 Admin API),<strong>在裁決之前不實作、不上線</strong>。<br>本次不請求裁決此事,僅先揭露,以免日後看起來像偷渡。</p>
+<hr>
+<h2>肆、閘道路由 <code>/inbox/</code> — 預告,非本次請求</h2>
+<p>依《App服務對齊指南》§4,路由權威在 cats-portal,加改一律走貴方 PR。我方預計於 <strong>T11</strong> 正式提出,屆時提供:</p>
+<div class="tablewrap"><table><thead><tr><th>項目</th><th>值</th></tr></thead><tbody><tr><td>路徑</td><td><code>/inbox/</code></td></tr><tr><td>上游</td><td><code>cats-inbox-api:8080</code>(對外容器已於自家 compose 宣告 <code>cats-edge</code> external + <code>name: cats-edge</code>,alias <code>cats-inbox-api</code>)</td></tr><tr><td>特殊需求</td><td>無大檔上傳、無特殊逾時;需標準 <code>proxy_headers</code>(<code>X-Real-IP</code> / <code>X-Forwarded-For</code> / <code>Host</code>)</td></tr><tr><td>我方紀律</td><td>換版重建後自行執行 <code>docker exec portal-gateway nginx -s reload</code>(§3.1 第 3 點);<code>.env</code> 已設 <code>COMPOSE_FILE</code> 封住「同目錄第二份 compose」的坑(§5.3)</td></tr></tbody></table></div>
+<p>隔離線遵守情形:<strong>只有</strong> <code>cats-inbox-api</code> 上 <code>cats-edge</code>;<code>cats-inbox-pg</code>(PostgreSQL 15)不上 <code>cats-edge</code>、不對主機發布 port。以測試釘住(<code>tests/test_skeleton.py</code>,19 項)。</p>
+<hr>
+<h2>伍、開通政策偏離申請:「讀自己的收件匣」請准首登自動授 <code>reader</code></h2>
+<h3>一、申請內容</h3>
+<div class="tablewrap"><table><thead><tr><th>動作</th><th>申請的授權方式</th></tr></thead><tbody><tr><td>讀<strong>自己</strong>的收件匣、標自己的訊息已讀、看有效公告</td><td><strong>首登自動授 <code>reader</code> 角色</strong> ←(這是偏離)</td></tr><tr><td>寄人對人站內信(<code>sender</code>)</td><td>維持 deny-by-default、管理後台手動開通</td></tr><tr><td>發布公告(<code>announcer</code>)</td><td>維持 deny-by-default、管理後台手動開通</td></tr><tr><td>管理(派角色、清快取)(<code>admin</code>)</td><td>維持 deny-by-default;bootstrap 清單 + 手動開通</td></tr></tbody></table></div>
+<p><strong>偏離的是哪一條:</strong> §4.3/§4.4「首登建本地 user(零角色)→ 所有業務功能 403 待開通」中,<strong>僅「讀自己收件匣」這一項</strong>。其餘一字不動。</p>
+<h3>二、為什麼提這個偏離</h3>
+<ol><li><strong>通知中心的可用性等於「送得到」。</strong> 逐人手動開通的結果是:系統推了通知、使用者收不到,而且<strong>畫面上一切正常</strong>——他只看到待開通頁。<strong>通知系統最糟的失效模式不是報錯,是安靜地沒送到。</strong></li><li><strong>這個代價貴方已經記載過。</strong> §4.2a D7-7 裁決文自陳:deny-by-default 之下「上線首日會有一批同時湧入的待開通帳號,ADMIN 處理完之前那些人看到 403——<strong>功能正確,體感像壞了</strong>」。對一般業務系統這是可承受的;對<strong>全平台的通知管道</strong>,它會讓每一個接進來的來源系統一起看起來壞掉。</li><li><strong>這裡沒有「別人的資料」可被越權讀取。</strong> <code>reader</code> 能讀的集合恆等於 <code>recipient_sub == 自己</code>。它不是「先給權限、之後收回」,而是<strong>這個角色的可及範圍在定義上就只有本人</strong>。</li><li>平台規模參考:PLM 正式環境 <strong>206 位使用者</strong>(貴方憲法 v1.7 更正值)。逐人開通通知讀取權,行政成本與其換得的安全性不相稱。</li></ol>
+<h3>三、風險與緩解(誠實列出,不粉飾)</h3>
+<div class="tablewrap"><table><thead><tr><th>風險</th><th>緩解</th></tr></thead><tbody><tr><td>自助註冊帳號(限 <code>@sporton.com.tw</code>)一登入就有收件匣</td><td>他只會看到<strong>空的</strong>收件匣——訊息要有人推給他才存在。<strong>寄信與發公告仍是手動開通</strong>,濫發路徑沒有打開</td></tr><tr><td>「註冊 ≠ 授權」原則被稀釋</td><td>本申請不觸碰任何<strong>業務系統</strong>的授權;inbox 的讀取範圍恆為本人</td></tr><tr><td>日後被援引為先例</td><td>我方同意將核可範圍<strong>寫死在「自我範圍資料的讀取」</strong>;任何跨人可見的功能(寄信、公告、管理)一律回到 deny-by-default</td></tr><tr><td>停用能力(§1.1 / D9=B)</td><td>保留:<code>reader</code> 可由我方後台單獨停用,不依賴 IdP 帳號狀態</td></tr></tbody></table></div>
+<h3>四、程序與前例</h3>
+<ul><li>upload-program 的「未登入開首頁可見說明性落地頁」是貴方<strong>唯一經核准的偏離</strong>(裁決見 <code>DOCS/回覆_upload-program_SSO接入申請_20260729.md</code>),程序可循:申請書 → 裁決文件 → 契約 §6 專屬條款登記。</li><li>🔴 <strong>未獲核可前,我方照契約全 deny 實作</strong>(首登零角色 → 403 待開通頁,頁上顯示本人 <code>sub</code>,§4.3 雞生蛋解法)。本申請不阻塞我方任何進度,只影響上線首日的體感。</li><li>若貴方認為此偏離不可開,請直接駁回;我方會在上線公告中寫明「首次使用需請管理員開通」,並把開通動線做進待開通頁。<strong>我方要的是明確的答案,不是通融。</strong></li></ul>
+<hr>
+<h2>陸、S2S 推送驗證規格 — 預告,本次不請求核發</h2>
+<p>契約 §6 記「首個 S2S 需求出現時補章節」;據我方所悉已有兩案排隊(<strong>rf-workorder</strong> 2026-08-14 送件、報告產生系統)。我方將是<strong>第三案</strong>,但<strong>角色與前兩案相反</strong>,故先揭露以便規格一次定完:</p>
+<div class="tablewrap"><table><thead><tr><th></th><th>前兩案</th><th>cats-inbox</th></tr></thead><tbody><tr><td>角色</td><td><strong>呼叫方</strong>申請憑證去打別人的 API</td><td><strong>被呼叫方</strong>——各系統要推通知進我方</td></tr><tr><td>需要規格回答的問題</td><td>我要什麼 scope</td><td>① 我方如何<strong>驗證</strong>呼叫方(audience/scope 怎麼切)② 如何<strong>辨識來源系統</strong>(把 <code>source_app</code> 綁到呼叫方身分,而不是信任 body 裡的字串)</td></tr></tbody></table></div>
+<p>🔴 我方紅線:<strong>無驗證的推送端點不得部署到正式環境</strong>,亦不以「先用共享 API key 頂著」上線。故 S2S 章節定稿前,推送 API(我方 T14)不對外開放;公告與收件匣(M3–M4)不依賴它,可先行上線。<br>正式申請將於我方 T13 送出;若貴方希望三案併案討論,我方可隨時配合提前提供需求書。</p>
+<hr>
+<h2>柒、時程與交付</h2>
+<div class="tablewrap"><table><thead><tr><th>項目</th><th>內容</th></tr></thead><tbody><tr><td>client 核發</td><td><strong>無硬期限</strong>。我方 M2(SSO 接入,約 14–19 h)在 client 到手後才能正式驗;開發期以本機 Keycloak 測試 realm 進行(介面不變)</td></tr><tr><td>偏離裁示</td><td>希望與 client 一併答覆;<strong>未答覆前照契約全 deny 實作</strong>,不阻塞</td></tr><tr><td>交付物請求</td><td><code>.env.keycloak</code> 樣板(client_id / 端點);🔴 <strong>secret 走安全管道</strong>,不進聊天、git、issue、PR、CI log(§5.2)</td></tr><tr><td>我方回報義務</td><td>接入完成後跑 §7 冒煙、於契約 §9 登記表掛號;<strong>未通過項如實打叉</strong>,不略過</td></tr></tbody></table></div>
+<hr>
+<h2>附註:我方已對齊的契約版本</h2>
+<div class="tablewrap"><table><thead><tr><th>契約</th><th>對齊版本</th></tr></thead><tbody><tr><td>帳號系統接入契約(SSO/OIDC)</td><td><strong>v2.7</strong>(2026-08-10)</td></tr><tr><td>App 服務對齊指南(gateway)</td><td><strong>v1.3</strong>(2026-07-27)</td></tr><tr><td>站內信通知中心設計規劃(功能上游)</td><td>v1.3(2026-07-27)——⚠ <strong>選址已變更</strong>:由「掛 compliance_system」改為獨立服務(Benny 2026-08-15 指示),回寫該文件之 PR 由我方於 T02 提出</td></tr><tr><td>portal 平台紅線</td><td>CLAUDE.md <strong>v1.11</strong>(2026-08-05)</td></tr></tbody></table></div>
+<hr>
+<h2>版本歷史</h2>
+<div class="tablewrap"><table><thead><tr><th>版本</th><th>日期</th><th>修改人</th><th>摘要</th></tr></thead><tbody><tr><td>v1.0</td><td>2026-08-15</td><td>Claude(Benny)</td><td>初版送出:依 SSO 契約 v2.7 §5 申請 confidential client <code>cats-inbox</code>(PKCE S256、redirect URI 含 <code>/inbox/</code> 前綴、無萬用字元);session 形態聲明=cookie/伺服器 session 並承擔 §10.3 front-channel logout 端點;claims 只要 <code>name</code> 且自我設限於 §4.2a L1,主動揭露「收件匣顯示寄件人姓名現行契約無依據、階段一因此零人名、階段二另案申請」;隨函提出開通政策偏離申請(僅「讀自己收件匣」首登自動授 <code>reader</code>,含風險與緩解,未核可前照契約全 deny);預告 <code>/inbox/</code> 閘道路由(T11)與 S2S 被呼叫方驗證規格需求(T13,平台第三案且角色相反)</td></tr></tbody></table></div>
+</body>
+</html>
