@@ -35,6 +35,15 @@ if [ -f CLAUDE.md ]; then
   ok "CLAUDE.md 存在"
   grep -q "cats-inbox" CLAUDE.md && ok "附錄 A 已填 cats-inbox" \
     || ng "CLAUDE.md" "附錄 A 未特化(找不到 cats-inbox)"
+  # 憲法自己也是文件,第七條一體適用——改憲法時忘了升版是最容易發生的事
+  check_meta CLAUDE.md
+  # 第九條11:指令必須標明「在哪裡下」;A.4 必須填上本專案的實際值,否則條文無從執行
+  grep -q "【機器】【路徑】【專案】" CLAUDE.md \
+    && ok "第九條11 指令位置標示格式在案" \
+    || ng "CLAUDE.md" "缺第九條11 的 【機器】【路徑】【專案】 格式"
+  grep -q "CATS VM" CLAUDE.md \
+    && ok "A.4 已填指令位置的實際值" \
+    || ng "CLAUDE.md" "A.4 未填機器/路徑實際值(條文無法執行)"
 else
   ng "CLAUDE.md" "檔案不存在"
 fi
