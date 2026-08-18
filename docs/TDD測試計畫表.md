@@ -1,8 +1,8 @@
 # cats-inbox TDD 測試計畫表
 
 **建立日期:** 2026-08-15 09:40
-**最後更新:** 2026-08-15 09:40
-**版本:** v1.0
+**最後更新:** 2026-08-18 01:25
+**版本:** v1.1
 
 > 依 `docs/開發計畫書.md` §3 的架構逐元件展開:**每個任務動工前該先寫哪一支會失敗的測試**。
 > 憲法第三條:先寫紅測試釘住預期行為,才改程式;「測試全綠」指**實際跑過看到綠燈**。
@@ -107,8 +107,11 @@ front-channel logout(SLO)         test_auth.py(T06:免認證、冪等、只刪 c
 |---|---|---|
 | T11 | 手動:`curl -skI https://catsapp.sporton.com.tw/inbox/health` | 200;且既有路由(`/plm/` `/TMP_GEN/` `/core/`)zero-diff |
 | T12 | SSO 契約 §7 冒煙清單 | 🔴 SLO 項測試前**必須清 cookie 或用無痕視窗**——否則舊 cookie 直接放行、沒走 OIDC 交換,IdP 手上沒有 client session 可通知,**端點零呼叫的症狀與「設定沒套用」完全相同**(§10.7) |
-| T14 | `test_push.py::test_push_requires_s2s_token` | 無 token / 使用者 JWT / 錯 audience → 一律 **401** |
-| T14 | `test_push.py::test_push_rejects_unknown_source_app` | 未登記的 `source_app` → 400 |
+| T14 | `test_push.py::test_push_requires_s2s_token` | 無 token / 使用者 JWT / 錯 `aud` → 一律 **401** |
+| T14 | `test_push.py::test_push_verifies_scope_per_endpoint` | token 的 `aud` 正確但**缺 `notification:push` scope** → **401**。🔴 契約 §11.9 第 2 坑:只驗 `aud` 的話兩條流的 token 互打得動,**而兩邊的測試都會過** |
+| T14 | `test_push.py::test_x_user_id_is_verified_not_just_logged` | 缺 `X-User-Id` → **400**;非 UUID 形狀 → 400;等於呼叫方 service account 自身 → 400。🔴 不得「缺就當系統發出」——那會讓稽核鏈在最需要的時候恰好是空的(portal 加嚴條件) |
+| T14 | `test_push.py::test_idempotency_key_dedupes` | 同一 `Idempotency-Key` 重送 → 200 但**訊息數不變**;缺 key → 400 |
+| T14 | `test_push.py::test_source_app_ignores_body` | body 帶 `source_app: "portal"` 而呼叫方是別的 client → 以 **client 身分**為準。🔴 能自稱來源=能冒充任何系統發通知,而通知帶著平台的官方外觀 |
 | T16 | `test_messages.py::test_direct_message_requires_sender_role` | 無 `sender` 角色寄信 → 403 |
 | T16 | `test_messages.py::test_recipient_must_have_logged_in_before` | 收件人不在「已首登使用者」名冊 → 400(對齊 D7-7「首登才建列」) |
 
@@ -119,7 +122,15 @@ front-channel logout(SLO)         test_auth.py(T06:免認證、冪等、只刪 c
 1. **一律 fixture 現造假資料**;嚴禁真實個資、正式資料匯出檔進測試與 CI(共通紅線)。
 2. 假 sub 一律用固定的假 UUID(如 `00000000-0000-4000-8000-00000000000x`),不取自任何真實帳號。
 3. 🔴 **假 IdP 的 token 必須真的會過期、簽章必須真的可被驗**——契約 §3.3 明文提醒:抹平過期行為的測試替身會把「登入 5 分鐘後靜默登出」這類缺陷一起藏起來。
-4. 安全類測試**必須含反例**(壞輸入被拒),只測好路徑等於沒測。
+4. 🔴 **假 token 必須帶真實 IdP 會給的 claims,尤其 `at_hash`**(2026-08-18 新增,來源:契約 v3.2 記載的 PLM 實例)。
+   > PLM 開旗標當天,**第一個真人登入 100% 失敗於 `at_hash`**,而它的 **400 多支離線測試一支都沒抓到**
+   > ——**因為測試自己造的 token 沒有那個 claim**。真實 IdP 多給一個 claim 就改變了函式庫的行為。
+   > 那次是「§7 冒煙第一次真的擋下東西」。
+   我方的對應動作:`test_auth.py` 的假 IdP 必須簽出**與 Keycloak 實際回傳同一組 claims**
+   (含 `at_hash`、`sid`、`azp`、`nonce`),並新增一支**反向測試**:少了 `at_hash` 時我方的驗證行為必須是明確的
+   (要嘛拒絕、要嘛忽略),**不得因函式庫預設而在真實環境才第一次顯現**。
+   ⚠ 這是**同型盲點**:上一條(過期)與本條(claims 完整性)都是「測試替身比真實 IdP 寬鬆」。
+5. 安全類測試**必須含反例**(壞輸入被拒),只測好路徑等於沒測。
 
 ## 5. CI 與覆蓋現況(誠實標示)
 
@@ -129,7 +140,7 @@ front-channel logout(SLO)         test_auth.py(T06:免認證、冪等、只刪 c
 | 文件層 21 項 | ✅ 已跑、全綠 |
 | 骨架層 19 項 | ✅ 已跑、全綠 |
 | 應用層 4 項 | ✅ 已跑、全綠 |
-| M2–M6 測試 | ⬜ **尚未撰寫**(規格見 §3;不得視為已覆蓋) |
+| M2–M6 測試 | ⬜ **尚未撰寫**(規格見 §3;不得視為已覆蓋)。⚠ T14 的規格已於 2026-08-18 由 portal 核定,五支測試的斷言已具體化 |
 | 真 IdP / gateway 冒煙 | ⬜ **尚未執行**(需 T03 client 與 T11 路由;CI 跑不動) |
 | `docker compose config` 解析 | ✅ 已於本機驗過(Compose v5.1.1);**容器實際啟動尚未驗**(本環境無 docker daemon) |
 
@@ -139,4 +150,5 @@ front-channel logout(SLO)         test_auth.py(T06:免認證、冪等、只刪 c
 
 | 版本 | 日期 | 修改人 | 摘要 |
 |---|---|---|---|
-| v1.0 | 2026-08-15 | Claude(Benny) | 初版:測試四分層、架構元件對應、T01–T16 逐任務紅測試規格(含契約踩過的坑:kid 輪替、伺服器端續期、假 token 不得永不過期、bootstrap 對既有 pending 帳號生效、SLO 測試前清 cookie、action_url 前綴比對反例);測試資料原則;CI 覆蓋現況誠實標示未撰寫/未執行項 |
+| v1.1 | 2026-08-18 | Benny | **補一個同型盲點與五支 T14 測試**。①§4 新增第 4 條:**假 token 必須帶真實 IdP 會給的 claims,尤其 `at_hash`** ——來源是契約 v3.2 記載的 PLM 實例:開旗標當天第一個真人登入 **100% 失敗於 `at_hash`**,而其 **400 多支離線測試一支都沒抓到,因為測試自己造的 token 沒有那個 claim**。我方原本只釘了「假 token 必須真的會過期」,**兩者是同一個形狀**(測試替身比真實 IdP 寬鬆),故一併釘住。②T14 的五支測試依 portal 2026-08-18 核定的規格具體化:逐端點驗 scope(§11.9 第 2 坑)、`X-User-Id` 必驗不只記錄、`Idempotency-Key` 去重、`source_app` 不採信 body |
+| v1.0 | 2026-08-15 | Benny | 初版:測試四分層、架構元件對應、T01–T16 逐任務紅測試規格(含契約踩過的坑:kid 輪替、伺服器端續期、假 token 不得永不過期、bootstrap 對既有 pending 帳號生效、SLO 測試前清 cookie、action_url 前綴比對反例);測試資料原則;CI 覆蓋現況誠實標示未撰寫/未執行項 |
