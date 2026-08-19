@@ -44,6 +44,7 @@ TARGETS = [
     ROOT / "docs" / "任務表.md",
     ROOT / "docs" / "TDD測試計畫表.md",
     ROOT / "docs" / "SSO接入申請.md",
+    ROOT / "docs" / "plans" / "帳號落地統一與組織部門對齊計畫書.md",
     ROOT / "README.md",
 ]
 
