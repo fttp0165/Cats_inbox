@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
-"""cats-inbox FastAPI 應用進入點(T01 骨架:只有健康檢查)。
+"""cats-inbox FastAPI 應用進入點。
 
 用途: 建立 app 實例、掛上 `/inbox` 前綴的路由。
-副作用: 無(本階段不連 DB、不發外部請求)。
+副作用: 無(健康檢查不連 DB;OIDC 路由只在設定齊備時才註冊)。
 
 🔴 為什麼路由前綴寫在應用裡,而不是靠 gateway 去掉前綴:
    本服務掛在 `catsapp.sporton.com.tw/inbox/`(D2″ 單一 hostname 之下),
@@ -13,37 +13,89 @@
 """
 
 from fastapi import APIRouter, FastAPI
+from fastapi.responses import JSONResponse
 
 from app import __version__
+from app import clock as clock_module
 from app.config import get_settings
-
-settings = get_settings()
-
-app = FastAPI(
-    title="cats-inbox",
-    version=__version__,
-    # OpenAPI 文件也掛在子路徑下,避免與平台其他 App 的 /docs 撞路徑
-    docs_url=f"{settings.base_path}/docs",
-    openapi_url=f"{settings.base_path}/openapi.json",
-)
-
-# 所有路由統一掛前綴;新增路由一律加進這個 router,不要直接掛 app
-router = APIRouter(prefix=settings.base_path)
+from app.oidc import OidcClient, OidcError
 
 
-@router.get("/health", tags=["ops"])
-def health() -> dict:
-    """健康檢查。
+def create_app(*, transport=None, clock=None) -> FastAPI:
+    """建立 app 實例。
 
-    回傳: {"status": "ok", "version": <版本常數>}
-    副作用: 無
+    參數:
+      transport — OIDC 的 HTTP 傳輸(測試注入替身;正式環境留空用 httpx)
+      clock     — 回傳 epoch 秒的可呼叫物(測試可推進;正式環境用真實時鐘)
+    回傳: FastAPI
+    副作用: 無(不連線、不建表)
 
-    🔴 **刻意不查 DB**(平台容器紅線)。理由:健康檢查是 orchestrator 判斷
-    「要不要重啟/摘掉這個容器」的依據。把 DB 查詢放進來,等於讓 DB 一慢
-    就把原本健康的 API 容器連帶判死,故障範圍反而被放大。
-    DB 的可用性由 `cats-inbox-pg` 自己的 healthcheck 負責。
+    做成工廠而不是模組層的單一實例,理由有二:
+      ① OIDC 路由**是否註冊**取決於環境變數(見下),而模組層實例會在
+         第一次 import 時就把設定凍住,測試無法在同一個行程裡驗兩種狀態;
+      ② 傳輸與時鐘要能被注入——契約 §3.3 的兩條紅線(±30s、300 秒續期)
+         只在時間邊界上出錯,沒有可注入的時鐘就只能靠人手動等 5 分鐘。
     """
-    return {"status": "ok", "version": __version__}
+    settings = get_settings()
+    now = clock or clock_module.now
+
+    app = FastAPI(
+        title="cats-inbox",
+        version=__version__,
+        # OpenAPI 文件也掛在子路徑下,避免與平台其他 App 的 /docs 撞路徑
+        docs_url=f"{settings.base_path}/docs",
+        openapi_url=f"{settings.base_path}/openapi.json",
+    )
+
+    # 所有路由統一掛前綴;新增路由一律加進這個 router,不要直接掛 app
+    router = APIRouter(prefix=settings.base_path)
+
+    @router.get("/health", tags=["ops"])
+    def health() -> dict:
+        """健康檢查。
+
+        回傳: {"status": "ok", "version": <版本常數>}
+        副作用: 無
+
+        🔴 **刻意不查 DB**(平台容器紅線)。理由:健康檢查是 orchestrator 判斷
+        「要不要重啟/摘掉這個容器」的依據。把 DB 查詢放進來,等於讓 DB 一慢
+        就把原本健康的 API 容器連帶判死,故障範圍反而被放大。
+        DB 的可用性由 `cats-inbox-pg` 自己的 healthcheck 負責。
+        """
+        return {"status": "ok", "version": __version__}
+
+    # ── OIDC 路由:設定齊備才註冊 ──────────────────────────────────
+    # 🔴 這就是 T04 的回滾閥門(比照 portal 對 PLM 要求的 `PLM_SSO_ENABLED`
+    #    預設 off、off 時行為逐字不變)。issuer 或 session secret 沒設好時
+    #    **不註冊**登入路由,而不是註冊一個會在使用者點下去才炸的路由——
+    #    「還沒設定完」因此是一個明確狀態(404),不是一個 500。
+    if settings.oidc_issuer and settings.session_secret:
+        from app.routes_auth import build_auth_router
+        from app.session import SessionStore
+
+        oidc = OidcClient(settings, transport=transport, clock=now)
+        store = SessionStore(settings.session_secret, clock=now)
+        router.include_router(build_auth_router(
+            settings=settings, oidc=oidc, store=store, clock=now
+        ))
+        app.state.oidc = oidc
+        app.state.session_store = store
+
+    app.include_router(router)
+
+    @app.exception_handler(OidcError)
+    def _oidc_error_handler(_request, exc: OidcError):
+        """把 OIDC 錯誤轉成對應狀態碼的 JSON。
+
+        🔴 401 與 403 不得混用(契約 §11.5 的分界對登入同樣適用):
+           本處只會產生 400/401/503;403「已認證但未開通」是 T05 的事。
+           錯誤內容只給代碼,不給細節——細節只進 log,不告訴呼叫方
+           「是哪一項不對」(那等於幫攻擊者縮小範圍)。
+        """
+        return JSONResponse({"error": exc.code}, status_code=exc.status_code)
+
+    return app
 
 
-app.include_router(router)
+# uvicorn 的進入點(`app.main:app`)
+app = create_app()

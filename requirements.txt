@@ -3,3 +3,8 @@ fastapi==0.141.1
 uvicorn[standard]==0.34.0
 jinja2==3.1.5
 itsdangerous==2.2.0
+# ── OIDC(T04)──
+# PyJWT 的 crypto extra 帶 cryptography:RS256 驗簽必需
+# (契約 §3.2 只接受 RS256;沒有 crypto extra 時 PyJWT 只能做 HMAC)
+PyJWT[crypto]==2.10.1
+httpx==0.28.1

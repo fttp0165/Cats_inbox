@@ -171,6 +171,30 @@ def test_env_example_lists_every_variable_read_by_config():
     assert not missing, f".env.example 缺少變數: {sorted(missing)}"
 
 
+def test_env_example_oidc_values_match_portal_delivery_shape():
+    """`.env.example` 的 OIDC 位址形狀必須與 portal 交付檔一致。
+
+    🔴 這條是實際踩到才補的(T04):`.env.example` 原本把
+    `INBOX_OIDC_INTERNAL_BASE` 寫成 `http://keycloak:8080/auth/realms/sporton`,
+    而 portal 的 `idp/bootstrap/client-cats-inbox.sh` 交付的是
+    `http://keycloak:8080/auth`(**不含 realm**),realm 由程式自 ISSUER 推導後接上。
+
+    照舊值部署會組出 `/realms/sporton/realms/sporton` → discovery 404,
+    而這件事**只會在第一個真人登入時出現**,本機離線測試全綠。
+    """
+    text = ENV_EXAMPLE.read_text(encoding="utf-8")
+    internal = re.search(r"^INBOX_OIDC_INTERNAL_BASE=(.*)$", text, re.MULTILINE)
+    assert internal, ".env.example 缺 INBOX_OIDC_INTERNAL_BASE"
+    assert "/realms/" not in internal.group(1), (
+        f"INBOX_OIDC_INTERNAL_BASE 不得含 /realms/(程式會自己接):{internal.group(1)}"
+    )
+    issuer = re.search(r"^INBOX_OIDC_ISSUER=(.*)$", text, re.MULTILINE)
+    assert issuer and "/realms/" in issuer.group(1), (
+        "INBOX_OIDC_ISSUER 必須含 /realms/<realm>——realm 由它推導"
+    )
+    assert issuer.group(1).startswith("https://"), "ISSUER 必須是對外 https 網址(契約 §2.4)"
+
+
 def test_env_example_carries_no_real_secrets():
     """.env.example 只列變數名,不得帶可用的值(secret 絕不進 git)。"""
     text = ENV_EXAMPLE.read_text(encoding="utf-8")

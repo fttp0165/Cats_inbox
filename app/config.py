@@ -36,6 +36,13 @@ class Settings:
     log_level: str          # log 走 stdout 單行 JSON(紅線:不記個資)
     db_url: str             # PostgreSQL 15 連線字串;健康檢查刻意不碰它
 
+    # 對外站台位址(D2″ 單一 hostname)。
+    # 🔴 用途:組 `redirect_uri`。它**必須逐字等於** client 的登記值,
+    #    所以刻意是一個明確的設定值,而不是從請求的 Host header 推導——
+    #    Host 可以被代理改寫,而契約 v2.14 記載的 PLM 事故就是實際送出值
+    #    與登記值不同,錯誤停在 Keycloak 頁面、自家 log 一片空白。
+    public_base_url: str
+
     # ── OIDC(契約 §2.4:伺服器端走內部位址,但 iss 維持對外)──
     oidc_issuer: str            # 驗 token 的 iss,**必須是對外網址**,不得改成內部位址
     oidc_internal_base: str     # 容器內實際連線用的 base(discovery/JWKS/token 端點)
@@ -61,6 +68,7 @@ def get_settings() -> Settings:
         base_path=_env("INBOX_BASE_PATH", "/inbox"),
         log_level=_env("INBOX_LOG_LEVEL", "INFO"),
         db_url=_env("INBOX_DB_URL"),
+        public_base_url=_env("INBOX_PUBLIC_BASE_URL", "https://catsapp.sporton.com.tw"),
         oidc_issuer=_env("INBOX_OIDC_ISSUER"),
         oidc_internal_base=_env("INBOX_OIDC_INTERNAL_BASE"),
         oidc_client_id=_env("INBOX_OIDC_CLIENT_ID"),
