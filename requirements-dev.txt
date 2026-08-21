@@ -1,5 +1,7 @@
 # 開發/CI 專用依賴(測試才需要,不進執行期映像)
 -r requirements.txt
 pytest==9.1.1
-httpx==0.28.1
 pyyaml==6.0.1
+# httpx 已移入 requirements.txt(T04 起是執行期依賴:OidcClient 用它連 IdP)。
+# 同一個套件在兩處釘版,遲早會出現兩個不同的版本號,而 pip 只會裝一個。
+
