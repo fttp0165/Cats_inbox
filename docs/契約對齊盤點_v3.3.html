@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>cats-inbox × 帳號系統接入契約 v3.3 — 逐條對齊盤點</title>
+<style>
+:root { color-scheme: light; }
+body { background:#ffffff; color:#1f2328; margin:0 auto; padding:2rem 1.2rem 4rem;
+       max-width:60rem; line-height:1.65;
+       font-family:-apple-system,"Segoe UI","Noto Sans TC","Microsoft JhengHei",
+                   "PingFang TC",sans-serif; }
+h1 { font-size:1.7rem; border-bottom:2px solid #d0d7de; padding-bottom:.4rem; }
+h2 { font-size:1.35rem; border-bottom:1px solid #d8dee4; padding-bottom:.3rem; margin-top:2.2rem; }
+h3 { font-size:1.12rem; margin-top:1.8rem; }
+h4 { font-size:1rem; margin-top:1.4rem; }
+p, li { overflow-wrap:break-word; }
+a { color:#0b57d0; }
+code { background:#f6f8fa; border:1px solid #e4e8ec; border-radius:4px;
+       padding:.08em .35em; font-size:.92em;
+       font-family:ui-monospace,SFMono-Regular,Consolas,"Noto Sans Mono CJK TC",monospace; }
+pre { background:#f6f8fa; border:1px solid #e4e8ec; border-radius:6px;
+      padding: .8rem 1rem; overflow-x:auto; line-height:1.5; }
+pre code { background:none; border:none; padding:0; }
+blockquote { margin:1rem 0; padding:.5rem 1rem; border-left:4px solid #c9d1d9;
+             background:#f8f9fb; color:#4b535d; }
+blockquote p { margin:.35rem 0; }
+.tablewrap { overflow-x:auto; margin:1rem 0; }
+table { border-collapse:collapse; font-size:.95em; min-width:50%; }
+th, td { border:1px solid #d0d7de; padding:.4rem .65rem; text-align:left; vertical-align:top; }
+th { background:#f6f8fa; }
+tr:nth-child(even) td { background:#fbfcfd; }
+hr { border:none; border-top:1px solid #d0d7de; margin:2rem 0; }
+figure.svg { margin:1.2rem 0; text-align:center; }
+figure.svg svg { max-width:100%; height:auto; }
+</style>
+</head>
+<body>
+<h1>cats-inbox × 帳號系統接入契約 v3.3 — 逐條對齊盤點</h1>
+<p><strong>建立日期:</strong> 2026-08-18 02:40<br><strong>最後更新:</strong> 2026-08-18 02:40<br><strong>版本:</strong> v1.0</p>
+<blockquote><p><strong>對齊基準:</strong> 《帳號系統接入契約(SSO/OIDC)》<strong>v3.3</strong>(cats-portal <code>DOCS/帳號系統接入契約_SSO.md</code>)。<br><strong>本專案原對齊 v2.7</strong>(2026-08-10),中間 14 個版本從未逐條比對——本文就是那次比對。<br><strong>對應任務:</strong> T03b(T04 前置)。</p>
+<p>🔴 <strong>本文的紀律:每一個「無影響」都必須寫出理由。</strong> 沒有理由的「無影響」與「沒看」在文件上長得一樣,<br>而<strong>沒看不會有錯誤訊息</strong>——它會在 T04 動工時變成一個照舊契約全綠的測試。</p></blockquote>
+<hr>
+<h2>0. 結論(先講)</h2>
+<div class="tablewrap"><table><thead><tr><th></th><th>數量</th><th>說明</th></tr></thead><tbody><tr><td>逐版比對</td><td><strong>14 版</strong>(v2.8 → v3.3)</td><td>每版一列,見 §2</td></tr><tr><td>🔴 對本專案<strong>有實質影響</strong></td><td><strong>5 項</strong></td><td>§11 S2S 全章、§10.3a 結尾斜線、§4.2b email 通則、v3.2 的 <code>at_hash</code> 教訓、§0′ 三個無錯誤訊息的坑</td></tr><tr><td>🟡 需注意但不改設計</td><td><strong>3 項</strong></td><td>§5.3 新增三個坑(email 別名 <code>+</code>、username 佔用 email 空間、curl 驗靜態檔)、§11.6 呼叫方義務(我方是資源方)</td></tr><tr><td>🟢 無影響(<strong>均附理由</strong>)</td><td><strong>6 項</strong></td><td>見 §2 各列</td></tr><tr><td><strong>回寫到任務的</strong></td><td><strong>4 處</strong></td><td>T04、T06、T14 驗收 + TDD 計畫表 §4</td></tr></tbody></table></div>
+<p><strong>盤點期間發現我方一處敘述錯誤</strong>(§3):<code>docs/開發計畫書.md</code> §2.1 的義務表把 §4.3 首登寫成「自動建 user(<strong>零角色</strong>)」,而 DI-2 已核可首登自動授 <code>reader</code>——同一份文件的兩處互相矛盾。已修。</p>
+<hr>
+<h2>1. 先照 §0′ 的導讀重讀一次(v2.10 新增)</h2>
+<p>契約 v2.10 新增 <strong>§0′「新 App 從哪裡讀起」</strong>,指定新 App 只需五節:§0 TL;DR → §2 端點 → §3 Token(尤其 §3.3 refresh)→ §4 接入義務 → §5 申請 + §10 登出。</p>
+<p><strong>我方逐節檢查結果:</strong></p>
+<div class="tablewrap"><table><thead><tr><th>節</th><th>我方落點</th><th>狀態</th></tr></thead><tbody><tr><td>§0 TL;DR 接入五條</td><td>開發計畫書 §2.1 逐條列</td><td>✅ 已對齊</td></tr><tr><td>§2 IdP 固定接口</td><td><code>.env.example</code> 的 <code>INBOX_OIDC_ISSUER</code> / <code>INBOX_OIDC_INTERNAL_BASE</code>;交付檔已產出實際值</td><td>✅</td></tr><tr><td>§3 Token 契約(含 §3.3 refresh)</td><td>T04 驗收含「登入後過 300s 頁面仍有效」</td><td>✅ 已釘</td></tr><tr><td>§4 接入義務</td><td>開發計畫書 §2.1;<code>display_name</code> 自限 §4.2a L1</td><td>✅</td></tr><tr><td>§5 + §10</td><td>T03 已完成申請;T06 為 SLO 端點</td><td>✅</td></tr></tbody></table></div>
+<p>🔴 <strong>§0′ 列出「三個不會有錯誤訊息的坑」,逐項對照我方:</strong></p>
+<div class="tablewrap"><table><thead><tr><th>坑</th><th>我方是否已防</th><th>證據</th></tr></thead><tbody><tr><td><strong>client 型別選錯</strong>(建立不報錯、回讀也過,第一個使用者登入才失敗)</td><td>✅ 申請書〈壹〉寫明判準與理由,client 已以 confidential 建立並回讀驗證</td><td>契約 §9 該列</td></tr><tr><td><strong>不做 refresh</strong>(5 分鐘後靜默退回未登入,伺服器零錯誤)</td><td>✅ T04 驗收項</td><td>任務表 T04</td></tr><tr><td><strong>登出旗標開了但沒填 URL</strong>(管理介面顯示已啟用,而通知一次都沒送過)</td><td>✅ client 建立時 URL 與旗標同時寫入並回讀</td><td>契約 §9 該列</td></tr></tbody></table></div>
+<hr>
+<h2>2. 逐版比對(v2.8 → v3.3)</h2>
+<div class="tablewrap"><table><thead><tr><th>版本</th><th>契約改了什麼</th><th>對 cats-inbox 的影響</th><th>落點</th></tr></thead><tbody><tr><td><strong>v2.8</strong></td><td>§10.6 補 PLM 的 SLO 列;明載「缺一列的後果不是表格難看,是<strong>沒有人在追</strong>」</td><td>🟢 <strong>無影響</strong>——理由:那是 PLM 的登記列,我方 SLO 義務自 T03 申請時即已具名聲明(cookie/伺服器 session),不依賴該表補列。⚠ 但<strong>「沒有人在追」這個判準我方採用</strong>:T06 完成後必須主動知會 portal 註冊 URL,不能等它來問</td><td>T06 已含</td></tr><tr><td><strong>v2.9</strong></td><td>§4.2a 新增 <strong>L1b 通知用信箱</strong>級別(繼承 L1 的 1/2/5/6/7,加:僅寄本人、只信 <code>email_verified=true</code>、<strong>不得顯示在任何頁面</strong>、不得作 join key、寄信失敗不得阻斷業務)</td><td>🟢 <strong>目前無影響</strong>——理由:我方<strong>不申請 email</strong>,client 的 <code>email</code> scope 已被主動移除,ID token 拿不到該 claim,結構上無從落地。⚠ <strong>但它是 N2(email 併寄)日後的唯一路徑</strong>,已於 §4 記錄</td><td>設計規劃 N2</td></tr><tr><td><strong>v2.10</strong></td><td>新增 <strong>§0′ 新 App 導讀</strong> + 三個「不會有錯誤訊息」的坑;修 §6 PLM 那列與 §9 打架</td><td>🔴 <strong>有影響</strong>——理由:我方正是「新 App」,§0′ 是為我方這種情境寫的。已依它重讀五節(見 §1),三個坑逐項對照</td><td>本文 §1</td></tr><tr><td><strong>v2.11</strong></td><td>§5.3 新增坑:<strong>用 <code>curl</code> 驗證自己的靜態檔在不在</strong>——SEC-1 是 regex location、優先權高於 prefix,命中的 request <strong>根本沒送到 app</strong>,403 與檔案存不存在無關</td><td>🟡 <strong>需注意</strong>——理由:我方 T11 掛上 <code>/inbox/</code> 後若要驗靜態檔(Bootstrap 本地託管),<strong>不可用 HTTP 打</strong>,要進容器查檔案系統。回應帶 <code>x-blocked-by: cats-portal-gateway/SEC-1</code> 即為此情形</td><td>T11 驗收註記</td></tr><tr><td><strong>v2.12</strong></td><td>§5.3 新增坑:<code>user+tag@</code> 別名當測試信箱——Keycloak 全綠而信就是不到,三個驗證器都放行 <code>+</code>,帳號一旦建起來就永久佔著那個 email</td><td>🟢 <strong>無影響</strong>——理由:我方零註冊頁、零 email 用途、不建任何帳號(§4.8 全部指向 IdP 內建流程),測試用假 <code>sub</code> 不用 email</td></tr><tr><td><strong>v2.13</strong></td><td>§5.3 新增坑:<code>User exists with same email</code> 但查遍帳號沒人用——佔住的是<strong>另一個帳號的 <code>username</code></strong>(realm <code>loginWithEmailAllowed=true</code> 讓兩者共用登入識別空間)</td><td>🟢 <strong>無影響</strong>——理由:同上,我方不建帳號。⚠ 但它印證了一條我方已遵守的紀律:<strong>只認 <code>sub</code>,不拿 <code>preferred_username</code> 當鍵</strong></td></tr><tr><td><strong>v2.14</strong></td><td>§9 PLM 的 redirect URI 由一條改兩條——Django <code>reverse()</code> 回<strong>後註冊者</strong>,實際送出帶 <code>/account/</code>;OAuth 逐字比對,只登記一條會<strong>首次登入就 mismatch</strong>,而錯誤停在 Keycloak 頁面、app 的 log 是空的</td><td>🔴 <strong>有影響(方法論)</strong>——理由:我方是 FastAPI,不會有 Django <code>reverse()</code> 的行為,但<strong>同型風險存在</strong>:我方若日後在 router 上重複掛載 callback 或加 <code>root_path</code>,實際送出的 <code>redirect_uri</code> 可能與登記值不同。<strong>已列為 T04 驗收:登入前先印出實際要送出的 <code>redirect_uri</code>,與 client 登記值逐字比對</strong></td><td>T04 新增驗收</td></tr><tr><td><strong>v2.15</strong></td><td>新增 <strong>§10.3a:front-channel 路徑沒有結尾斜線,而那不是規定</strong>——真正的規格只有「與你的 route <strong>逐字相同</strong>」,因為 Keycloak 拿它去<strong>呼叫</strong>而不是比對</td><td>🔴 <strong>有影響</strong>——理由:我方 client 已登記<strong>無斜線</strong>的 <code>/inbox/oidc/frontchannel-logout</code>。<strong>T06 的 route 必須逐字相同</strong>;FastAPI 預設不會自動加斜線,但若用 <code>APIRouter</code> 的 <code>redirect_slashes</code> 行為或寫成 <code>.../frontchannel-logout/</code> 就會不一致,而<strong>症狀是端點零呼叫,與「設定沒套用」完全相同</strong></td><td>T06 新增驗收</td></tr><tr><td><strong>v2.16</strong></td><td>時間戳更正:v2.13–v2.15 三列原標 08-15/08-16,實際都是 08-14。成因=<strong>沿用對方來函檔頭的日期,沒有跟自己的機器對過</strong></td><td>🟡 <strong>需注意(方法論)</strong>——理由:我方本 session 已犯同型錯誤(文件寫 08-15,實際 08-17,靠 GitHub CI 時間戳才發現)。紀律:<strong>日期以自己機器或 CI 時間戳為準</strong>,引用對方文件時保留其原標示並註明「其檔頭標 X」</td><td>本文與各 dev-log 已採用</td></tr><tr><td><strong>v2.17</strong></td><td>§9 PLM 改 🟢;記入一個可推廣的驗法:<strong>拿一個壞 code 去打 token 端點,回 <code>400 invalid_grant</code> 證明 secret 正確,回 <code>invalid_client</code> 就是錯的</strong></td><td>🔴 <strong>有影響(直接可用)</strong>——理由:那是<strong>用一個必定失敗的請求證明另一件事,不需要真人登入</strong>。我方 secret 尚未進 <code>.env</code>,拿到後可用此法先驗 secret 正確,不必等 gateway 路由與真人登入。<strong>已列為 T04 驗收</strong></td><td>T04 新增驗收</td></tr><tr><td><strong>v3.0</strong></td><td><strong>新增 §11 S2S 全章</strong>:client 形態 <code>&lt;client_id&gt;-sa</code>、<code>aud</code> 走 <strong>client scope + optional</strong>(掛 default 會讓每張 token 都帶該 aud 而<strong>完全沒有症狀</strong>)、scope 命名 <code>&lt;資源&gt;:&lt;動作&gt;</code> 不繼承、判準「畫面上有人在等這個回應嗎」、<strong>資源方必須逐端點驗 scope</strong>、<strong>§11.7 寫入型一律不核發</strong></td><td>🔴 <strong>影響最大的一項</strong>——理由:我方 T14 是 §11.7 第一個寫入型案(已於 2026-08-18 獲原則核可)。<strong>§11.5 資源方三條義務</strong>逐條落到 T14:驗 <code>aud</code>=自己 client_id、<strong>逐端點驗 scope</strong>、deny-by-default 且「<strong>內網不是身分</strong>」;401(憑證無效)與 403(有效但無權)必須分開</td><td>T14 驗收擴充</td></tr><tr><td><strong>v3.1</strong></td><td>新增 <strong>§4.2b 通知用途 email 快取</strong>通則 + portal 加嚴四處(只落地 <code>email_verified=true</code>、必須提供退訂、email 不得作查詢鍵、空窗期須成文);並明載<strong>另立而非塞進 §4.2a 當 L3</strong> 的理由</td><td>🟡 <strong>設計方向影響</strong>——理由:①N2(email 併寄)日後走這條;②其「失敗模式不同的東西不共用條文」的判準,<strong>已用於修正我方 DI-3 的提案方向</strong>(從「§4.2a 增訂級別」改為「另立一節」)</td><td>設計規劃 N2、T15</td></tr><tr><td><strong>v3.2</strong></td><td>§9 PLM 改 ✅;🔴 記入開旗標當天的阻斷缺陷:<strong>第一個真人登入 100% 失敗於 <code>at_hash</code>,而 PLM 400 多支離線測試一支都沒抓到——測試自己造的 token 沒有那個 claim</strong></td><td>🔴 <strong>有影響</strong>——理由:我方 TDD 計畫表原本只釘「假 token 必須真的會過期」,<strong>沒有釘 claims 完整性</strong>,是同一個形狀的盲點(測試替身比真實 IdP 寬鬆)。<strong>已於 TDD 計畫表 v1.1 §4 第 4 條補上</strong></td><td>TDD §4 已補</td></tr><tr><td><strong>v3.3</strong></td><td>受理本專案接入;§6/§9/§11.8 三處登記;DI-2 與寫入型 S2S 兩項核可</td><td>🔴 <strong>就是我方</strong>——四項核可條件已寫進 <code>CLAUDE.md</code> A.3 紅線</td><td>已完成</td></tr></tbody></table></div>
+<hr>
+<h2>3. 盤點期間發現我方自己的一處錯誤</h2>
+<p><code>docs/開發計畫書.md</code> §2.1 的契約義務表,「首登(§4.3)」那列寫:</p>
+<blockquote><p>自動建 user(<strong>零角色</strong>)→ 403 待開通頁</p></blockquote>
+<p>而 <strong>DI-2 已於 2026-08-18 獲核可</strong>:首登自動授 <code>reader</code>(僅自我範圍讀取)。同一份文件的 §2.3-3 已寫「已核可」,§2.1 卻還是舊敘述——<strong>兩處互相矛盾,而拿 §2.1 當規格的人會做出錯的實作</strong>。</p>
+<p>已修:§2.1 該列改為「自動建 user → <strong>自動授 <code>reader</code>(DI-2 核可,僅自我範圍讀取)</strong>;其餘功能 403 待開通頁,頁上顯示本人 <code>sub</code>」。</p>
+<blockquote><p>這正是契約 v2.10 修 §6/§9 打架、v3.2 修檔頭與 §9 打架的同一種漂移。<strong>一份文件裡兩個地方講同一件事,遲早會有一個過期。</strong></p></blockquote>
+<hr>
+<h2>4. 三問的答覆(portal 回覆函〈肆〉)</h2>
+<h3>Q1 登出後實際導向哪一頁?</h3>
+<p><strong>答:<code>https://catsapp.sporton.com.tw/inbox/</code></strong>(client 已登記的兩值之一,不需重跑腳本)。</p>
+<p>理由:我方沒有獨立的「已登出」頁——收件匣本身在未登入時就是導向 IdP 登入頁,故登出後回 <code>/inbox/</code> 的行為是「回到入口 → 被導去登入頁」,語意正確且少一個要維護的頁面。<code>/inbox/logged-out/</code> 這個登記值<strong>保留備用</strong>,若日後要顯示「你已登出」的說明頁再啟用(登記值已在,不必再改 client)。</p>
+<p>🔴 <strong>front-channel 端點路徑確認:<code>/inbox/oidc/frontchannel-logout</code>,無結尾斜線</strong>,與 client 登記值逐字相同(§10.3a)。T06 實作時 FastAPI 的 route 必須寫成完全一樣的字串。</p>
+<h3>Q2 <code>source_app</code> 由 service client 身分推導的具體對應方式?</h3>
+<p><strong>答:資料庫表 <code>source_app</code>,以 <code>azp</code>(呼叫方 client_id)為主鍵。</strong></p>
+<div class="tablewrap"><table><thead><tr><th>選項</th><th>取捨</th><th>採用</th></tr></thead><tbody><tr><td>程式內靜態 dict</td><td>最簡單,但新增來源要改程式 + 重新部署</td><td>❌</td></tr><tr><td><strong>DB 表(<code>azp</code> → 顯示標籤 + 啟用旗標)</strong></td><td>新增來源=管理後台加一列;可停用單一來源而不動程式</td><td>✅</td></tr><tr><td>Keycloak client attribute</td><td>對應留在 IdP,但我方每次推送都要查 Keycloak,把 IdP 變成熱路徑相依(§11.6 明文反對)</td><td>❌</td></tr></tbody></table></div>
+<p><strong>未登記的 <code>azp</code> → 403</strong>(deny-by-default,§11.5 第 3 條),不 fallback 成「未知來源」——通知顯示來源標籤,一個能自稱來源的呼叫方就是釣魚載具。</p>
+<h3>Q3 <code>Idempotency-Key</code> 的保留窗口?</h3>
+<p><strong>答:24 小時</strong>;超過窗口的同 key 重送<strong>視為新訊息</strong>。</p>
+<p>理由:</p>
+<ul><li><strong>下限</strong>由重試策略決定:§11.6 規定重試 ≤2 次 + 指數退避,實際重送間隔是秒到分鐘級。24 小時遠大於它,涵蓋「呼叫方排程整批重跑」這種最長的合理重送。</li><li><strong>上限</strong>由儲存決定:去重表只存 <code>(azp, key, message_id, created_at)</code>,24 小時的量級是「一天的推送筆數」,可用單一 <code>DELETE WHERE created_at &lt; now() - 24h</code> 的每日清理搞定,不需要額外基礎設施。</li><li><strong>超過窗口視為新訊息而非拒收</strong>:拒收會讓一個月後的重跑靜默失敗,而<strong>通知沒送到是這個系統最糟的失效模式</strong>。寧可重複一次,也不要靜默丟掉。</li></ul>
+<p>⚠ 誠實標註:24 小時是<strong>推理出來的值,不是實測</strong>。上線後若出現「同一事件隔天重複出現在收件匣」,窗口要往上調——這一句寫進 T14 的遺留問題。</p>
+<hr>
+<h2>5. 回寫清單(本次一併完成)</h2>
+<div class="tablewrap"><table><thead><tr><th>文件</th><th>改了什麼</th></tr></thead><tbody><tr><td><code>docs/開發計畫書.md</code></td><td>§2.1 首登那列改為「自動授 <code>reader</code>」(§3 的矛盾);§2.1 標題版本 v3.3</td></tr><tr><td><code>docs/任務表.md</code></td><td>T04 加兩項驗收(印出實際 <code>redirect_uri</code> 逐字比對、壞 code 驗 secret);T06 加「route 字串與 client 登記值逐字相同」;T14 加 §11.5 三條資源方義務與 401/403 分離</td></tr><tr><td><code>docs/TDD測試計畫表.md</code></td><td>T04/T06/T14 對應測試補上;§4 第 4 條(claims 完整性)已於 v1.1 先行補上</td></tr><tr><td><code>CLAUDE.md</code></td><td>A.2 由「僅相關者已對齊」改為「<strong>逐條已對齊 v3.3</strong>」,附本文路徑</td></tr></tbody></table></div>
+<hr>
+<h2>版本歷史</h2>
+<div class="tablewrap"><table><thead><tr><th>版本</th><th>日期</th><th>修改人</th><th>摘要</th></tr></thead><tbody><tr><td>v1.0</td><td>2026-08-18</td><td>Benny</td><td>初版:逐版比對契約 v2.8→v3.3(14 版),每版標明對本專案有無影響<strong>且每個「無影響」都附理由</strong>;依 v2.10 新增的 §0′ 導讀重讀五節並逐項對照「三個不會有錯誤訊息的坑」;找出 5 項有實質影響(§11 S2S、§10.3a 結尾斜線、§4.2b、v3.2 的 <code>at_hash</code> 盲點、§0′)、3 項需注意、6 項無影響;盤點期間另發現我方 <code>開發計畫書.md</code> §2.1 與 §2.3-3 互相矛盾(首登零角色 vs 已核可自動授 <code>reader</code>)並修正;答覆 portal 三問(登出導向 <code>/inbox/</code>、<code>source_app</code> 用 DB 表以 <code>azp</code> 為鍵且未登記者 403、<code>Idempotency-Key</code> 窗口 24 小時且超窗視為新訊息並誠實標註該值未經實測)</td></tr></tbody></table></div>
+</body>
+</html>
