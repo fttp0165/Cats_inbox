@@ -1,0 +1,96 @@
+{# 收件匣頁(T08)。
+
+   🔴 **階段一零人名。** 這一頁不顯示任何人的姓名 —— 契約 §4.2a L1 明文
+      「顯示名稱快取不得出現在一般使用者可見頁面」,而 DI-3(同儕可見的
+      顯示名稱)portal **尚未裁決**。寄件人一律以 `source_app` 標籤呈現。
+      模板拿到的資料裡連 `sender_sub` 都沒有(見 `routes_inbox._serialize`)。
+
+   🔴 **零外部資源**(契約 §4.10 禁外部 CDN):Bootstrap 5.3.8 本地託管於
+      `assets/vendor/`,來源與雜湊記在該目錄的 `PROVENANCE.md`。
+      ⚠ 檔案**必須在 `StaticFiles` 掛載的目錄底下** —— portal 2026-08-03
+      踩過:檔案在 repo 裡、路徑也算得對,而 app 不會送出去,
+      症狀是「整頁沒有樣式」且伺服器零錯誤。守門在 `tests/test_static.py`。
+
+   🔴 light 主題寫死,不做 `prefers-color-scheme` 深色切換(憲法第四條 1/2)。
+   ⚠ T10 會加嚴格 CSP + nonce,屆時 `<style>` 要補 `nonce="{{ csp_nonce }}"`。
+      現在不先加是因為那個變數還不存在,加了會算繪出字面上的 nonce=""。
+
+   ⚠ **`body` 一律用 Jinja2 的預設跳脫輸出**(`{{ }}`,不用 `|safe`)。
+      body 在資料庫裡是純文字(本專案紅線),而 stored XSS 是本系統第一風險
+      ——同源之下一次 XSS 可觸及 IdP。T10 會為此加反例測試。 #}
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>收件匣 — 站內信</title>
+  <link rel="stylesheet" href="/inbox/assets/vendor/bootstrap.min.css">
+  <style>
+    :root { color-scheme: light; }
+    body { background: #f6f7f9; }
+    .msg-unread { border-left: 4px solid #1f6feb; }
+    .msg-read { border-left: 4px solid #d8dee4; }
+    .src-tag { font-size: .75rem; letter-spacing: .02em; }
+    .msg-body { white-space: pre-wrap; word-break: break-word; }
+  </style>
+</head>
+<body class="text-body">
+  <main class="container py-4" style="max-width: 52rem;">
+
+    <header class="d-flex align-items-center justify-content-between mb-4">
+      <h1 class="h4 mb-0">
+        收件匣
+        {% if unread %}
+          <span class="badge text-bg-primary align-middle ms-2">{{ unread }} 未讀</span>
+        {% endif %}
+      </h1>
+      <a class="btn btn-outline-secondary btn-sm" href="{{ base_path }}/logout">登出</a>
+    </header>
+
+    {% if not items %}
+      <div class="alert alert-light border" role="status">
+        目前沒有訊息。
+      </div>
+    {% else %}
+      <ul class="list-unstyled mb-0">
+        {% for m in items %}
+          <li class="card mb-3 {{ 'msg-read' if m.is_read else 'msg-unread' }}">
+            <div class="card-body">
+              <div class="d-flex align-items-start justify-content-between gap-3">
+                <div class="flex-grow-1">
+                  <div class="d-flex align-items-center gap-2 mb-1">
+                    {# 階段一以來源系統取代人名 #}
+                    {% if m.source_app %}
+                      <span class="badge text-bg-secondary src-tag">{{ m.source_app }}</span>
+                    {% else %}
+                      <span class="badge text-bg-secondary src-tag">系統</span>
+                    {% endif %}
+                    {% if not m.is_read %}
+                      <span class="badge text-bg-primary src-tag">未讀</span>
+                    {% endif %}
+                  </div>
+                  <h2 class="h6 mb-1">{{ m.subject }}</h2>
+                  <p class="msg-body mb-2 text-secondary small">{{ m.body }}</p>
+                  <div class="text-secondary" style="font-size: .75rem;">
+                    {{ m.created_at }}
+                  </div>
+                </div>
+              </div>
+              {% if m.action_url %}
+                {# action_url 只可能是同站值(寫入時已驗,T10);此處不再組字串 #}
+                <a class="btn btn-sm btn-primary mt-2" href="{{ m.action_url }}">前往處理</a>
+              {% endif %}
+            </div>
+          </li>
+        {% endfor %}
+      </ul>
+    {% endif %}
+
+    <footer class="mt-4 text-secondary" style="font-size: .75rem;">
+      {# 顯示本人的 sub 而非姓名:與待開通頁一致(契約 §4.3),
+         且這一頁不顯示任何人名(§4.2a L1、DI-3 未裁決)。 #}
+      登入身分:<code>{{ sub }}</code>
+    </footer>
+  </main>
+</body>
+</html>

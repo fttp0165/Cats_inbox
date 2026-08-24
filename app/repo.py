@@ -15,11 +15,11 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.authz import ALL_ROLES, ROLE_ADMIN, ROLE_READER
-from app.models import AppUser, UserRole
+from app.models import AppUser, Message, UserRole
 
 
 def _utcnow() -> datetime:
@@ -146,3 +146,83 @@ def ensure_user_on_login(
 
     session.flush()
     return user
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# T08:訊息讀取
+#
+# 🔴 這三個函式的共同紅線:**收件人一律由呼叫方傳入的 `sub` 決定,
+#    而那個 `sub` 一律來自已驗簽的 token,不是來自 request。**
+#    每一個函式都有 `recipient_sub` 參數且**必填** —— 沒有「查全部」的版本,
+#    因為那個版本一旦存在,就會有人在某個端點上不小心用到它。
+# ═══════════════════════════════════════════════════════════════════════
+
+
+def list_messages(
+    session: Session, *, recipient_sub: str, unread_only: bool = False, limit: int = 50
+) -> list[Message]:
+    """列出某人的訊息(新的在前)。
+
+    參數:
+      recipient_sub — **必填**,來自 token 的 `sub`
+      unread_only   — True 時只回未讀
+      limit         — 上限;預設 50
+    回傳: list[Message]
+    副作用: 無(只讀)
+
+    🔴 `recipient_sub` 沒有預設值也沒有「不傳就查全部」的分支。
+       那個分支若存在,少寫一個參數的呼叫端就會把全公司的通知端出去,
+       而**畫面看起來完全正常**(只是訊息比較多)。
+    """
+    stmt = select(Message).where(Message.recipient_sub == recipient_sub)
+    if unread_only:
+        stmt = stmt.where(Message.is_read.is_(False))
+    stmt = stmt.order_by(Message.created_at.desc()).limit(limit)
+    return list(session.scalars(stmt))
+
+
+def count_unread(session: Session, *, recipient_sub: str) -> int:
+    """數某人的未讀訊息。
+
+    參數: recipient_sub — **必填**,來自 token 的 `sub`
+    回傳: int
+    副作用: 無(只讀)
+
+    ⚠ 這是未讀鈴鐺的查詢(A.1:**30 秒輪詢**),由每一個開著入口首頁的人
+    每 30 秒跑一次。用 `count(*)` 而不是把列撈出來再 `len()` ——
+    後者在訊息累積之後會把整個收件匣搬進記憶體,而**在資料少的時候
+    兩者的觀測結果完全相同**。走 `ix_message_recipient_unread` 索引。
+    """
+    stmt = (
+        select(func.count())
+        .select_from(Message)
+        .where(Message.recipient_sub == recipient_sub, Message.is_read.is_(False))
+    )
+    return int(session.scalar(stmt) or 0)
+
+
+def mark_message_read(session: Session, *, message_id, recipient_sub: str) -> Message | None:
+    """把某人的某一則訊息標為已讀(**冪等**)。
+
+    參數: message_id;recipient_sub — **必填**,來自 token 的 `sub`
+    回傳: Message(成功)/ None(不是這個人的訊息,或不存在)
+    副作用: 可能 UPDATE `is_read` / `read_at` 兩欄
+
+    🔴 **冪等的語意是「第二次呼叫不改變 `read_at`」**,不只是「不報錯」。
+       被覆寫的話,「這則是什麼時候讀的」永遠是最後一次點擊的時間,
+       那個欄位就沒有意義了 —— 而兩次呼叫都回 200,不會有任何錯誤訊息。
+
+    🔴 查詢條件同時帶 `id` **與** `recipient_sub`:不是先查出來再比對。
+       先查再比對的寫法會多一條「查到了但忘記比對」的路徑,
+       而那條路徑讓任何人拿到 id 就能標別人的訊息。
+    """
+    row = session.scalar(
+        select(Message).where(Message.id == message_id, Message.recipient_sub == recipient_sub)
+    )
+    if row is None:
+        return None
+    if not row.is_read:
+        row.is_read = True
+        row.read_at = _utcnow()
+        session.flush()
+    return row

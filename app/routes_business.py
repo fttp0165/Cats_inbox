@@ -23,7 +23,6 @@ from fastapi.responses import JSONResponse
 
 from app.authz import (
     CAP_PUBLISH_ANNOUNCEMENT,
-    CAP_READ_OWN,
     CAP_SEND_MESSAGE,
     require_capability,
 )
@@ -42,15 +41,10 @@ def build_business_router() -> APIRouter:
     """
     router = APIRouter(prefix="/api/v1", tags=["messages"])
 
-    @router.get("/messages")
-    def list_messages(_=Depends(require_capability(CAP_READ_OWN))):
-        """列出**自己的**訊息。
-
-        能力:`read_own`(`reader` 有,DEC-16 核可範圍內)
-        🔴 T08 實作時,收件權限一律後端判定(只能讀 `recipient_sub == 自己`),
-           前端傳入的身分欄位一律不採信(本專案紅線)。
-        """
-        return _NOT_YET
+    # ⚠ `GET /messages` 的 501 外殼已於 **T08** 移除 —— 它現在由
+    #   `app/routes_inbox.py` 真正實作(含 `unread-count` 與標已讀)。
+    #   留著一個回 501 的同路徑端點會遮蔽真正的實作,而 FastAPI 不會警告
+    #   ——先註冊的那個贏,於是「功能做完了卻還是 501」。
 
     @router.post("/messages")
     def send_message(_=Depends(require_capability(CAP_SEND_MESSAGE))):

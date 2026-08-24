@@ -12,7 +12,10 @@
    而那種錯只會在登入當下才發現(契約 §4.1 已記載同型的坑)。
 """
 
+from pathlib import Path
+
 from fastapi import APIRouter, FastAPI
+from fastapi.staticfiles import StaticFiles
 from fastapi.responses import JSONResponse
 
 from app import __version__
@@ -73,6 +76,7 @@ def create_app(*, transport=None, clock=None) -> FastAPI:
         from app.routes_admin import build_admin_router
         from app.routes_auth import build_auth_router
         from app.routes_business import build_business_router
+        from app.routes_inbox import build_inbox_router
         from app.session import SessionStore
 
         # 🔴 建立 engine,但**不** create_all —— schema 的唯一權威是
@@ -87,6 +91,7 @@ def create_app(*, transport=None, clock=None) -> FastAPI:
         router.include_router(build_auth_router(
             settings=settings, oidc=oidc, store=store, clock=now
         ))
+        router.include_router(build_inbox_router(settings=settings))
         router.include_router(build_business_router())
         router.include_router(build_admin_router(settings=settings))
         # `app.state` 是 `app/deps.py` 取用 store/oidc/clock 的唯一途徑
@@ -96,6 +101,16 @@ def create_app(*, transport=None, clock=None) -> FastAPI:
         app.state.clock = now
 
     app.include_router(router)
+
+    # ── 靜態資源(T08)────────────────────────────────────────────────
+    # 🔴 掛載點是 `{base_path}/assets`,對應目錄 `app/static/assets`。
+    #    portal 2026-08-03 踩過:檔案放在 mount 目錄**之外**時,
+    #    它在 repo 裡、路徑也算得對,而 app 根本不會送出去 ——
+    #    瀏覽器拿到 404,**整頁沒有樣式而伺服器零錯誤**。
+    #    守門:`tests/test_static.py::test_every_template_asset_is_actually_served`
+    #    ——它打實際的 URL,不是檢查檔案在不在 repo 裡(後者正是當時通過的那種檢查)。
+    _assets = Path(__file__).parent / "static" / "assets"
+    app.mount(f"{settings.base_path}/assets", StaticFiles(directory=str(_assets)), name="assets")
 
     @app.exception_handler(OidcError)
     def _oidc_error_handler(_request, exc: OidcError):
