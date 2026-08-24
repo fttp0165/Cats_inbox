@@ -14,8 +14,11 @@ from __future__ import annotations
 
 import secrets
 
-from fastapi import APIRouter, Depends, Request
-from fastapi.responses import JSONResponse, RedirectResponse
+from pathlib import Path
+
+from fastapi import APIRouter, Depends, Request, Response
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.templating import Jinja2Templates
 
 from app.oidc import (
     OidcClient,
@@ -48,6 +51,13 @@ def build_auth_router(*, settings, oidc: OidcClient, store: SessionStore, clock)
     """
     router = APIRouter(tags=["auth"])
     cookie_kwargs = store.cookie_kwargs(settings.base_path)
+    templates = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
+
+    # 🔴 登出後的落地頁,必須是 client 已登記的 post-logout 值之一,**逐字**。
+    #    登記的兩個是 `/inbox/` 與 `/inbox/logged-out/`;選後者的理由見
+    #    `logged_out()` 的 docstring。未登記的值會讓 Keycloak 拒絕導回,
+    #    使用者停在 IdP 頁面上,而我方 log 只看到「他登出了」——一切正常。
+    post_logout_redirect = f"{settings.public_base_url.rstrip('/')}{settings.base_path}/logged-out/"
 
     def _current(request: Request):
         """取當前 session,必要時主動續期。
@@ -195,6 +205,105 @@ def build_auth_router(*, settings, oidc: OidcClient, store: SessionStore, clock)
         resp.set_cookie(SESSION_COOKIE, store.seal(key), **cookie_kwargs)
         resp.delete_cookie(TX_COOKIE, path=cookie_kwargs["path"])
         return resp
+
+    # ── 自發登出(契約 §10,方向一)────────────────────────────────
+    @router.get("/logout", include_in_schema=False)
+    def logout(request: Request):
+        """使用者主動登出:**先清本地 session**,再導 IdP 的 end_session。
+
+        回傳: 302(有 session → IdP;無 session → 已登出頁)
+        副作用: 刪除本地 session 與 session cookie
+
+        🔴 順序不能反。先導 IdP 的話,使用者中途關掉分頁、或 IdP 當下不可用,
+        本地 session 就還活著——他按了登出,而 inbox 還認得他。
+        本地清除是我方能保證的部分,IdP 那一段是 best-effort。
+        """
+        key = store.unseal(request.cookies.get(SESSION_COOKIE))
+        data = store.get(key)
+        store.delete(key)          # ← 先刪,再組導向
+
+        if data is None:
+            # 沒有 session 就沒有 id_token_hint,拿去 end_session 只會得到
+            # 一個要使用者確認的頁面。直接送他到已登出頁,語意正確也少一次往返。
+            target = f"{settings.base_path}/logged-out/"
+        else:
+            target = oidc.end_session_url(
+                id_token_hint=data.id_token,
+                post_logout_redirect=post_logout_redirect,
+            )
+            log_event("oidc_logout", sub=data.sub)
+
+        resp = RedirectResponse(target, status_code=302)
+        resp.delete_cookie(SESSION_COOKIE, path=cookie_kwargs["path"])
+        resp.headers["Cache-Control"] = "no-store"
+        return resp
+
+    # ── 被通知登出(契約 §10.3,方向二)────────────────────────────
+    # 🔴 路徑**無結尾斜線**,逐字對齊 client 的 `frontchannel.logout.url`
+    #    登記值 `https://catsapp.sporton.com.tw/inbox/oidc/frontchannel-logout`。
+    #    §10.3a:真正的規格不是「無斜線」,是**與登記值逐字相同**——
+    #    Keycloak 拿它去**呼叫**而非比對,差一個字元的症狀是**端點零呼叫**,
+    #    而那與「設定根本沒套用」完全無法區分(PLM 2026-08-14 前例)。
+    @router.get("/oidc/frontchannel-logout", include_in_schema=False, status_code=204)
+    def frontchannel_logout(request: Request, sid: str | None = None, iss: str | None = None):
+        """IdP 通知登出(front-channel):清 session、回 204。
+
+        參數: sid / iss — Keycloak 會帶(portal 註冊時開 `session.required=true`);
+              **帶與不帶都必須能處理**
+        回傳: 204(永遠;冪等)
+        副作用: 刪除 session 與 session cookie —— **只有刪,沒有別的**
+
+        🔴 本端點**免認證**:契約 §10.3——IdP 是以 iframe 載入它,
+        那個請求不會帶任何 API token。免認證的代價由「只准刪」來封住:
+        「**被任意第三方呼叫的最壞後果必須是使用者被登出**」。
+        故此處不得建立 session、不得寫業務資料、不得依 sid 反查任何個資。
+
+        🔴 兩條刪除路徑都要有,少一條就會靜默漏掉:
+          ① 依 `sid` 刪 —— IdP 的 iframe **可能沒有那個人的 cookie**
+             (分頁凍結、cookie 政策、或從別的脈絡發起)。只靠 cookie 的實作
+             在那種情況下靜默不生效:使用者以為登出了,inbox 還是登入狀態。
+             這也是 T04 決定「session 放伺服器端」的唯一理由。
+          ② 依本次請求的 cookie 刪 —— 同站 iframe 通常帶得到 cookie,
+             而**無 `sid` 的呼叫只有這條路**。
+        """
+        removed = 0
+        if sid:
+            removed += store.delete_by_idp_sid(sid)
+        key = store.unseal(request.cookies.get(SESSION_COOKIE))
+        if key:
+            store.delete(key)
+            removed += 1
+        # 只記事件與數量,不記 sid 內容也不記 sub(§10.3 的最小副作用原則)
+        log_event("oidc_frontchannel_logout", removed=removed, had_sid=bool(sid))
+
+        resp = Response(status_code=204)
+        resp.delete_cookie(SESSION_COOKIE, path=cookie_kwargs["path"])
+        # 🔴 被快取的登出等於登出無效,而症狀是「有時登得出、有時登不出」
+        #    ——間歇性症狀沒有人查得動。
+        resp.headers["Cache-Control"] = "no-store"
+        return resp
+
+    # ── 已登出頁 ──────────────────────────────────────────────────
+    @router.get("/logged-out/", include_in_schema=False, response_class=HTMLResponse)
+    def logged_out(request: Request):
+        """已登出說明頁(登出後的落地頁)。
+
+        回傳: 200 HTML
+        副作用: 無
+
+        🔴 為什麼需要這一頁,而不是像原本規劃那樣導回 `/inbox/`:
+        導回 `/inbox/` 會讓未登入者立刻被推去 IdP 登入頁,使用者**看不出
+        登出成功沒有**;而萬一 SSO session 還在,他會被**靜默登回去**
+        ——那正是契約 §10 緣起描述的「登出看起來沒用」。
+        本路徑 `/inbox/logged-out/` **早已在 client 的 post-logout 登記值裡**,
+        所以改用它不需要 portal 動任何設定。
+        """
+        return templates.TemplateResponse(
+            request=request,
+            name="logged_out.html",
+            context={"login_url": f"{settings.base_path}/oidc/login"},
+            headers={"Cache-Control": "no-store"},
+        )
 
     # ── 身分探針 ──────────────────────────────────────────────────
     @router.get("/me")

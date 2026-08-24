@@ -37,7 +37,7 @@ figure.svg svg { max-width:100%; height:auto; }
 </head>
 <body>
 <h1>cats-inbox × 帳號系統接入契約 v3.3 — 逐條對齊盤點</h1>
-<p><strong>建立日期:</strong> 2026-08-18 02:40<br><strong>最後更新:</strong> 2026-08-18 02:40<br><strong>版本:</strong> v1.0</p>
+<p><strong>建立日期:</strong> 2026-08-18 02:40<br><strong>最後更新:</strong> 2026-08-24 19:10<br><strong>版本:</strong> v1.1</p>
 <blockquote><p><strong>對齊基準:</strong> 《帳號系統接入契約(SSO/OIDC)》<strong>v3.3</strong>(cats-portal <code>DOCS/帳號系統接入契約_SSO.md</code>)。<br><strong>本專案原對齊 v2.7</strong>(2026-08-10),中間 14 個版本從未逐條比對——本文就是那次比對。<br><strong>對應任務:</strong> T03b(T04 前置)。</p>
 <p>🔴 <strong>本文的紀律:每一個「無影響」都必須寫出理由。</strong> 沒有理由的「無影響」與「沒看」在文件上長得一樣,<br>而<strong>沒看不會有錯誤訊息</strong>——它會在 T04 動工時變成一個照舊契約全綠的測試。</p></blockquote>
 <hr>
@@ -64,8 +64,11 @@ figure.svg svg { max-width:100%; height:auto; }
 <hr>
 <h2>4. 三問的答覆(portal 回覆函〈肆〉)</h2>
 <h3>Q1 登出後實際導向哪一頁?</h3>
-<p><strong>答:<code>https://catsapp.sporton.com.tw/inbox/</code></strong>(client 已登記的兩值之一,不需重跑腳本)。</p>
-<p>理由:我方沒有獨立的「已登出」頁——收件匣本身在未登入時就是導向 IdP 登入頁,故登出後回 <code>/inbox/</code> 的行為是「回到入口 → 被導去登入頁」,語意正確且少一個要維護的頁面。<code>/inbox/logged-out/</code> 這個登記值<strong>保留備用</strong>,若日後要顯示「你已登出」的說明頁再啟用(登記值已在,不必再改 client)。</p>
+<p><strong>答:<code>https://catsapp.sporton.com.tw/inbox/logged-out/</code></strong>(client 已登記的兩值之一,<strong>不需重跑腳本、portal 零改動</strong>)。</p>
+<p>🔴 <strong>本答案於 2026-08-24(T06 動工時)更正,而覆函尚未發出——趁還沒送出去改,零成本。</strong></p>
+<p>原答案是 <code>/inbox/</code>,理由寫「我方沒有獨立的已登出頁,<code>/inbox/</code> 未登入時就是導向 IdP 登入頁」。T06 動工前重新檢視,該理由有兩個問題:</p>
+<ol><li><strong><code>/inbox/</code> 現在不存在</strong>(T08 才做)。照原答案實作,登出會落在 404。</li><li>更根本:登出後<strong>立刻被導去登入頁</strong>,使用者<strong>看不出登出成功沒有</strong>;而萬一 SSO session 還在,他會被<strong>靜默登回去</strong>——那正是契約 §10 緣起描述的「登出看起來沒用」那種體感(sporton_core 2026-07-31 實測的正是同一件事的另一面)。</li></ol>
+<p>改用 <code>/inbox/logged-out/</code>:它<strong>早就在 client 的 <code>post.logout.redirect.uris</code> 登記值裡</strong>,所以這個更正<strong>不需要 portal 動任何設定</strong>。該頁已於 T06 實作(<code>app/templates/logged_out.html</code>,零外部資源、light 主題、含「重新登入」連結),並有測試釘住它免認證可達。</p>
 <p>🔴 <strong>front-channel 端點路徑確認:<code>/inbox/oidc/frontchannel-logout</code>,無結尾斜線</strong>,與 client 登記值逐字相同(§10.3a)。T06 實作時 FastAPI 的 route 必須寫成完全一樣的字串。</p>
 <h3>Q2 <code>source_app</code> 由 service client 身分推導的具體對應方式?</h3>
 <p><strong>答:資料庫表 <code>source_app</code>,以 <code>azp</code>(呼叫方 client_id)為主鍵。</strong></p>
@@ -81,6 +84,6 @@ figure.svg svg { max-width:100%; height:auto; }
 <div class="tablewrap"><table><thead><tr><th>文件</th><th>改了什麼</th></tr></thead><tbody><tr><td><code>docs/開發計畫書.md</code></td><td>§2.1 首登那列改為「自動授 <code>reader</code>」(§3 的矛盾);§2.1 標題版本 v3.3</td></tr><tr><td><code>docs/任務表.md</code></td><td>T04 加兩項驗收(印出實際 <code>redirect_uri</code> 逐字比對、壞 code 驗 secret);T06 加「route 字串與 client 登記值逐字相同」;T14 加 §11.5 三條資源方義務與 401/403 分離</td></tr><tr><td><code>docs/TDD測試計畫表.md</code></td><td>T04/T06/T14 對應測試補上;§4 第 4 條(claims 完整性)已於 v1.1 先行補上</td></tr><tr><td><code>CLAUDE.md</code></td><td>A.2 由「僅相關者已對齊」改為「<strong>逐條已對齊 v3.3</strong>」,附本文路徑</td></tr></tbody></table></div>
 <hr>
 <h2>版本歷史</h2>
-<div class="tablewrap"><table><thead><tr><th>版本</th><th>日期</th><th>修改人</th><th>摘要</th></tr></thead><tbody><tr><td>v1.0</td><td>2026-08-18</td><td>Benny</td><td>初版:逐版比對契約 v2.8→v3.3(14 版),每版標明對本專案有無影響<strong>且每個「無影響」都附理由</strong>;依 v2.10 新增的 §0′ 導讀重讀五節並逐項對照「三個不會有錯誤訊息的坑」;找出 5 項有實質影響(§11 S2S、§10.3a 結尾斜線、§4.2b、v3.2 的 <code>at_hash</code> 盲點、§0′)、3 項需注意、6 項無影響;盤點期間另發現我方 <code>開發計畫書.md</code> §2.1 與 §2.3-3 互相矛盾(首登零角色 vs 已核可自動授 <code>reader</code>)並修正;答覆 portal 三問(登出導向 <code>/inbox/</code>、<code>source_app</code> 用 DB 表以 <code>azp</code> 為鍵且未登記者 403、<code>Idempotency-Key</code> 窗口 24 小時且超窗視為新訊息並誠實標註該值未經實測)</td></tr></tbody></table></div>
+<div class="tablewrap"><table><thead><tr><th>版本</th><th>日期</th><th>修改人</th><th>摘要</th></tr></thead><tbody><tr><td>v1.1</td><td>2026-08-24</td><td>Benny</td><td>🔴 <strong>§4 Q1 答案更正(T06 動工時發現,覆函尚未發出故零成本)</strong>:登出導向由 <code>/inbox/</code> 改為 <strong><code>/inbox/logged-out/</code></strong>。原答案的理由有兩個問題:①<code>/inbox/</code> 現在不存在(T08 才做),照它實作會落在 404;②登出後立刻被導去登入頁,使用者<strong>看不出登出成功沒有</strong>,而 SSO session 若還在會被<strong>靜默登回去</strong>——那正是契約 §10 緣起那種「登出看起來沒用」。新值<strong>早已在 client 登記值裡</strong>,portal 零改動。Q2、Q3 未動</td></tr><tr><td>v1.0</td><td>2026-08-18</td><td>Benny</td><td>初版:逐版比對契約 v2.8→v3.3(14 版),每版標明對本專案有無影響<strong>且每個「無影響」都附理由</strong>;依 v2.10 新增的 §0′ 導讀重讀五節並逐項對照「三個不會有錯誤訊息的坑」;找出 5 項有實質影響(§11 S2S、§10.3a 結尾斜線、§4.2b、v3.2 的 <code>at_hash</code> 盲點、§0′)、3 項需注意、6 項無影響;盤點期間另發現我方 <code>開發計畫書.md</code> §2.1 與 §2.3-3 互相矛盾(首登零角色 vs 已核可自動授 <code>reader</code>)並修正;答覆 portal 三問(登出導向 <code>/inbox/</code>、<code>source_app</code> 用 DB 表以 <code>azp</code> 為鍵且未登記者 403、<code>Idempotency-Key</code> 窗口 24 小時且超窗視為新訊息並誠實標註該值未經實測)</td></tr></tbody></table></div>
 </body>
 </html>

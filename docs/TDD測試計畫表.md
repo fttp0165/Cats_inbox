@@ -1,8 +1,8 @@
 # cats-inbox TDD 測試計畫表
 
 **建立日期:** 2026-08-15 09:40
-**最後更新:** 2026-08-22 00:40
-**版本:** v1.3
+**最後更新:** 2026-08-24 19:10
+**版本:** v1.4
 
 > 依 `docs/開發計畫書.md` §3 的架構逐元件展開:**每個任務動工前該先寫哪一支會失敗的測試**。
 > 憲法第三條:先寫紅測試釘住預期行為,才改程式;「測試全綠」指**實際跑過看到綠燈**。
@@ -93,7 +93,13 @@ front-channel logout(SLO)         test_auth.py(T06:免認證、冪等、只刪 c
 | T05 | `test_auth.py::test_display_name_cache_never_in_authz_path` | 授權判定不得讀 `display_name`(源碼層檢查);快取清除工具可清孤兒列 | 契約 §4.2a L1 第 4/7 條 |
 | T06 | `test_auth.py::test_frontchannel_logout_is_idempotent_and_unauthenticated` | 免認證呼叫 → 204;重複呼叫 → 204;帶/不帶 `sid`+`iss` 皆 204 | 契約 §10.3;iframe 載入時不會帶 token |
 | T06 | `test_auth.py::test_frontchannel_logout_only_deletes_cookie` | 端點不得建立 session、不得寫業務資料 | §10.3「被任意第三方呼叫的最壞後果必須是使用者被登出」 |
-| T06 | `test_auth.py::test_frontchannel_route_matches_client_registration_exactly` | route 字串必須是 `/inbox/oidc/frontchannel-logout`(**無結尾斜線**);帶斜線的變體必須 **404**(證明沒有靜默 redirect) | 🔴 §10.3a:Keycloak 拿登記值去**呼叫**而非比對,「無斜線」不是規定、**逐字相同**才是。差一字元的症狀是**端點零呼叫**,與「設定沒套用」完全相同(PLM 2026-08-14 前例;T03b 補) |
+| T06 | `test_logout.py::test_frontchannel_route_is_registered_verbatim` | 打 client 登記值(無斜線)必須 **204**;307=我方 route 多了斜線、404=路徑不存在。帶斜線的變體預期 **307**(若也直接 204 表示兩個變體都註冊了),且 307 必須**保留 `sid`/`iss`** | 🔴 §10.3a:Keycloak 拿登記值去**呼叫**而非比對,「無斜線」不是規定、**逐字相同**才是。差一字元的症狀是**端點零呼叫**,與「設定沒套用」完全相同(PLM 2026-08-14 前例)。⚠ **本列於 2026-08-24 更正**,原寫「帶斜線變體必須 404(證明沒有靜默 redirect)」——見下方更正說明 |
+| T06 | `test_logout.py::test_frontchannel_logout_with_sid_kills_that_session` | 拿 IdP 的 `sid`、**用一個完全沒有 cookie 的 client** 呼叫,原本那個 session 必須失效 | 🔴 front-channel 是 IdP 主動呼叫,iframe 的請求**可能沒有那個人的 cookie**(分頁凍結、cookie 政策、從別的脈絡發起)。只靠刪 cookie 的實作在那種情況下**靜默不生效**,使用者以為登出了而 inbox 還是登入狀態。這也是 T04 決定「session 放伺服器端」的唯一理由 |
+| T06 | `test_logout.py::test_logout_clears_local_session_before_redirecting_to_idp` | 自發登出:302 到 IdP(帶 `id_token_hint`)、**且伺服器端 session 數減一**、**且重放抄走的 cookie 也是 401** | 🔴 順序不能反(先導 IdP 則使用者中途關分頁時本地 session 還活著)。**只斷言「登出後 /me 是 401」不夠**——刪掉瀏覽器 cookie 也會讓 /me 變 401,而伺服器端那個 session 可能還活著,抄到 cookie 的人就還能用。**這個洞是突變檢查抓出來的**(2026-08-24) |
+| T06 | `test_logout.py::test_frontchannel_logout_response_is_not_cacheable` | 回應必須帶 `Cache-Control: no-store` | 被快取的登出等於登出無效,而症狀是**「有時登得出、有時登不出」**——間歇性症狀沒有人查得動 |
+| T06 | `test_logout.py::test_logout_without_session_is_safe` | 未登入按登出 → 302 到 `/inbox/logged-out/`,不得 500、不得去打 IdP | 沒有 session 就沒有 `id_token_hint`,拿去 `end_session` 只會得到一個要使用者確認的頁面 |
+| T06 | `test_logout.py::test_post_logout_redirect_uri_matches_registered_value` | 逐字等於 `https://catsapp.sporton.com.tw/inbox/logged-out/` | 🔴 與 T04 的 `redirect_uri` 同類,但症狀更難懂:Keycloak 對**未登記**的 post-logout 值會拒絕導回,使用者停在 IdP 頁面上,而我方 log 只看到「他登出了」——一切看起來正常 |
+| T06 | `test_logout.py::test_logged_out_page_is_public_and_offline` | 免認證 200、含重新登入連結、**零外部資源**、無深色自動切換 | 契約 §4.10 禁外部 CDN。這一頁是按下登出後**唯一**會看到的東西,它 404 的話使用者體感是「登出把系統弄壞了」 |
 
 ### M3 通知核心(測試待寫)
 
@@ -151,8 +157,9 @@ front-channel logout(SLO)         test_auth.py(T06:免認證、冪等、只刪 c
 | 骨架層 20 項 | ✅ 已跑、全綠 |
 | 應用層 4 項 | ✅ 已跑、全綠 |
 | **auth 層 12 項(T04)** | ✅ **已跑、全綠**(2026-08-21) |
+| **登出層 9 項(T06)** | ✅ **已跑、全綠**(2026-08-24) |
 | M3–M6 測試 | ⬜ **尚未撰寫**(規格見 §3;不得視為已覆蓋)。⚠ T14 的規格已於 2026-08-18 由 portal 核定,五支測試的斷言已具體化 |
-| T05 / T06 測試 | ⬜ 尚未撰寫(T04 已把 session 與 `sid` 的形狀備好:`delete_by_idp_sid` 已存在,T06 直接接) |
+| T05 測試 | ⬜ 尚未撰寫。⚠ 它需要 `app_user` 表,而建表排在 T07——動工前要先決定 migration 是否提前 |
 | 真 IdP / gateway 冒煙 | ⬜ **尚未執行**(client 已核發,但 secret 尚未進本服務;需 T11 路由。CI 跑不動) |
 | `docker compose config` 解析 | ✅ 已於本機驗過(Compose v5.1.1);**容器實際啟動尚未驗**(本環境無 docker daemon) |
 
@@ -189,12 +196,50 @@ front-channel logout(SLO)         test_auth.py(T06:免認證、冪等、只刪 c
    把「改壞正式程式碼」變成一個常設能力。列為後續建議(§5 遺留)。
 
 
+### 5.2 一處規格更正(2026-08-24,T06 動工時)
+
+**原規格(v1.2 寫的):** T06 的帶斜線變體「必須 **404**(證明沒有靜默 redirect)」。
+
+**實測:** FastAPI 對 `/inbox/oidc/frontchannel-logout/` 回 **307** 導到無斜線的 route,
+**且保留 `sid` 與 `iss` 查詢字串**;而 iframe 會跟隨 307。
+
+🔴 **重判後認定原規格的理由是錯的。** 它把那個 redirect 當成「會遮蔽登記不一致」的
+危害,但在正式環境它其實是**安全網**——portal 萬一登記成有斜線的變體,307 讓它
+**照樣生效**,而不是變成「端點零呼叫」。把它改成 404 在正式環境買不到任何東西,
+只讓一個登記錯字變成致命。
+
+**改法:** 斷言改為「打登記值(無斜線)必須 **204**」——307 就代表我方 route 帶了
+斜線,404 代表路徑不存在,兩種漂移都抓得到,而且**不依賴 redirect 行為**。
+
+⚠ **同時放棄了另一個做法:列舉 `app.routes` 斷言路徑字串。** 本版 FastAPI(0.141)
+把 `include_router` 的結果包成一個 `_IncludedRouter` 物件,列舉頂層**只拿到自動產生
+的 `/docs` 與 `/openapi.json`,一個實際端點都拿不到**。靠內部結構寫的斷言會在升版時
+**悄悄改變它在檢查什麼**——行為斷言不會。
+
+### 5.3 突變檢查(T06,2026-08-24)
+
+| 故意改壞 | 對應測試 | 結果 |
+|---|---|---|
+| front-channel route 加結尾斜線 | `test_frontchannel_route_is_registered_verbatim` | ✅ 紅 |
+| front-channel 不依 `sid` 刪 | `test_frontchannel_logout_with_sid_kills_that_session` | ✅ 紅 |
+| 自發登出改成「先導 IdP 再清」 | `test_logout_clears_local_session_before_redirecting_to_idp` | ✅ 紅(**補洞後**) |
+| post-logout 改用未登記的 `/inbox/` | `test_post_logout_redirect_uri_matches_registered_value` | ✅ 紅 |
+| 拿掉 `Cache-Control: no-store` | `test_frontchannel_logout_response_is_not_cacheable` | ✅ 紅 |
+| front-channel 順手建 session | `test_frontchannel_logout_only_deletes_cookie` | ✅ 紅 |
+
+🔴 **第三列是這次的收穫:它第一次跑是「未被抓到」。** 原測試只斷言「登出後
+`/inbox/me` 回 401」,而**刪掉瀏覽器的 cookie 也會讓 /me 變 401**——伺服器端那個
+session 其實還活著,抄到 cookie 值的人仍然是登入狀態。已補兩條斷言:
+伺服器端 session 數必須減一、且**重放抄走的 cookie 必須 401**。
+
+
 ---
 
 ## 版本歷史
 
 | 版本 | 日期 | 修改人 | 摘要 |
 |---|---|---|---|
+| v1.4 | 2026-08-24 | Benny | **T06 完工回寫**:T06 規格由 3 支擴為 7 支(檔案由 `test_auth.py` 改為 `test_logout.py`)。🔴 **§5.2 記一處規格更正**:原寫「帶斜線變體必須 404」,實測 FastAPI 回 **307 且保留 `sid`/`iss`**,重判後認定那個 redirect 在正式環境是**安全網**(登記錯字仍能生效)而非危害,改成「打登記值必須 204」——不依賴 redirect 行為;同時放棄「列舉 `app.routes`」的做法,因為本版 FastAPI 把 include 的結果包成 `_IncludedRouter`,列舉頂層**一個實際端點都拿不到**。🔴 **§5.3 突變檢查 6/6**,其中「先導 IdP 再清」第一次**未被抓到**——原測試只斷言 /me 回 401,而刪 cookie 也會讓它 401,伺服器端 session 其實還活著。已補「session 數減一」與「重放抄走的 cookie 必須 401」 |
 | v1.3 | 2026-08-21 | Benny | **T04 完工回寫**:新增五支測試規格——`test_login_route_issues_pkce_s256`(PKCE 退化成 plain **不會有症狀**)、`test_state_mismatch_is_rejected`(要連「沒建 session」一起斷言)、`test_refresh_failure_logs_user_out`(不然 §3.3 換來的收權即時性是假的)、`test_auth_routes_absent_without_issuer`(回滾閥門)、`test_env_example_oidc_values_match_portal_delivery_shape`(🔴 實際踩到:`.env.example` 與 portal 交付檔的 `INTERNAL_BASE` 形狀不一致,症狀只在第一個真人登入時出現)。並記錄 §5 新增的**突變檢查**結果:9 項突變 8 項被測試抓到 |
 | v1.2 | 2026-08-18 | Benny | **T03b 逐條對齊帶進來的五支測試**:①T04 `test_fake_idp_token_carries_real_claims`(契約 v3.2 的 `at_hash` 實例——PLM 400 多支離線測試沒抓到,因為測試自己造的 token 沒那個 claim);②T04 `test_redirect_uri_matches_registered_value`(v2.14:PLM 因 `reverse()` 回後註冊者而首登即 mismatch,而 **app 的 log 是空的**);③T04 手動「壞 code 驗 secret」(v2.17:用必定失敗的請求證明另一件事,不需真人登入);④T06 `test_frontchannel_route_matches_client_registration_exactly`(§10.3a:逐字相同才是規格,帶斜線的變體必須 404);⑤T14 `test_unregistered_azp_is_denied`(§11.5:**內網不是身分**)。並**更正一處**:T14 缺 scope 的預期由 401 改為 **403**——§11.5 明訂兩者分開,混用會讓呼叫方查不出是憑證錯還是授權不足 |
 | v1.1 | 2026-08-18 | Benny | **補一個同型盲點與五支 T14 測試**。①§4 新增第 4 條:**假 token 必須帶真實 IdP 會給的 claims,尤其 `at_hash`** ——來源是契約 v3.2 記載的 PLM 實例:開旗標當天第一個真人登入 **100% 失敗於 `at_hash`**,而其 **400 多支離線測試一支都沒抓到,因為測試自己造的 token 沒有那個 claim**。我方原本只釘了「假 token 必須真的會過期」,**兩者是同一個形狀**(測試替身比真實 IdP 寬鬆),故一併釘住。②T14 的五支測試依 portal 2026-08-18 核定的規格具體化:逐端點驗 scope(§11.9 第 2 坑)、`X-User-Id` 必驗不只記錄、`Idempotency-Key` 去重、`source_app` 不採信 body |
