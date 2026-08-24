@@ -60,71 +60,56 @@ def build_auth_router(*, settings, oidc: OidcClient, store: SessionStore, clock)
     post_logout_redirect = f"{settings.public_base_url.rstrip('/')}{settings.base_path}/logged-out/"
 
     def _current(request: Request):
-        """取當前 session,必要時主動續期。
+        """取當前 session(委派給 `app.deps.resolve_session`)。
 
-        回傳: (session_key, SessionData)
-        錯誤: 未登入或續期失敗 → OidcError(401)
-        副作用: 可能對 IdP 發 refresh 請求並更新 session
-
-        🔴 續期就寫在這裡,不是寫成「定時任務」:伺服器端算繪的 App 只有在
-        使用者實際發請求時才有機會續期,而那正是需要它有效的時刻。
-        契約 §3.3:不做續期的症狀是**登入 5 分鐘後靜默退回未登入,伺服器零錯誤**。
+        🔴 續期邏輯**不**寫在這裡:它必須對每一個已認證端點生效,
+        所以放在 `app/deps.py`。留在本 closure 裡只有 `/me` 用得到,
+        而業務端點(T08 起)少接的那一個就是「登入 5 分鐘後靜默未登入」。
         """
-        key = store.unseal(request.cookies.get(SESSION_COOKIE))
-        data = store.get(key)
-        if data is None:
-            raise OidcError(401, "not_authenticated", "無有效 session")
+        from app.deps import resolve_session
 
-        if data.access_expires_at - clock() > REFRESH_MARGIN_SECONDS:
-            return key, data
+        return resolve_session(request)
 
-        if not data.refresh_token:
-            # 沒有 refresh_token 可用:過期就是過期,不得沿用
-            store.delete(key)
-            raise OidcError(401, "session_expired", "access token 已過期且無 refresh_token")
+    def _session_from_tokens(tokens: dict, *, nonce: str) -> SessionData:
+        """把 callback 換回來的 token 轉成 SessionData,並完成首登建號。
 
-        try:
-            tokens = oidc.refresh(data.refresh_token)
-        except OidcError as exc:
-            # 🔴 refresh 失敗 = IdP 那邊 session 沒了(帳號停用、逾時、被登出)。
-            # 這一刻必須登出;沿用舊 session 會讓契約 §3.3 換來的
-            # 「收權即時性」變成假的(帳號停用後還能繼續用)。
-            store.delete(key)
-            log_event("oidc_refresh_failed", sub=data.sub, error=exc.code)
-            raise OidcError(401, "session_expired", "refresh 失敗,已登出")
-
-        refreshed = _session_from_tokens(tokens, previous=data)
-        store.replace(key, refreshed)
-        log_event("oidc_refreshed", sub=refreshed.sub)
-        return key, refreshed
-
-    def _session_from_tokens(tokens: dict, *, previous: SessionData | None = None,
-                             nonce: str | None = None) -> SessionData:
-        """把 token response 轉成 SessionData(含 id_token 驗證)。
-
-        參數:
-          tokens   — token 端點回應
-          previous — 續期時的舊 session(用來延續 sub/sid 並容忍缺項)
-          nonce    — 首次登入時比對用;續期不傳(規範上 refresh 換來的
-                     id_token 不帶 nonce,硬要比會讓續期永遠失敗)
+        參數: tokens — token 端點回應;nonce — 本次登入發出的一次性值(**必比**)
         回傳: SessionData
         錯誤: id_token 驗不過 → OidcError(401)
+        副作用: 驗簽 + **寫資料庫**(建號 / 更新 L1 快取 / 授角色)
+
+        ⚠ 只服務 callback。續期那條路在 `app/deps.py` —— 兩者的差別是
+        **續期換來的 id_token 依規範不帶 nonce**;合成一個函式會讓
+        「nonce 要不要比」變成一個參數,而那個參數遲早會被傳錯。
         """
         access = tokens.get("access_token", "")
         id_token = tokens.get("id_token", "")
         claims = oidc.verify_id_token(id_token, nonce=nonce, access_token=access or None)
-
         expires_in = float(tokens.get("expires_in", 300))
+
+        # 🔴 首登建號 / 每次登入的身分維護就掛在這裡——**驗簽通過之後**。
+        #    掛在驗簽之前等於讓任何人送一個 sub 就能在我方建號。
+        #    `display_name` 只從**這個** claims 取,是 L1 快取的唯一寫入路徑。
+        from app.db import session_scope
+        from app.repo import ensure_user_on_login
+
+        with session_scope() as db:
+            ensure_user_on_login(
+                db,
+                sub=claims["sub"],
+                display_name=claims.get("name"),
+                bootstrap_admin_subs=settings.bootstrap_admin_subs,
+                auto_grant_reader=settings.auto_grant_reader,
+            )
+
         return SessionData(
             sub=claims["sub"],
-            idp_sid=claims.get("sid") or (previous.idp_sid if previous else None),
+            idp_sid=claims.get("sid"),
             access_token=access,
-            # Keycloak 續期會給新的 refresh_token;沒給就沿用舊的
-            refresh_token=tokens.get("refresh_token")
-            or (previous.refresh_token if previous else None),
+            refresh_token=tokens.get("refresh_token"),
             id_token=id_token,
             access_expires_at=clock() + expires_in,
-            created_at=previous.created_at if previous else clock(),
+            created_at=clock(),
         )
 
     # ── 登入 ──────────────────────────────────────────────────────
@@ -306,6 +291,26 @@ def build_auth_router(*, settings, oidc: OidcClient, store: SessionStore, clock)
         )
 
     # ── 身分探針 ──────────────────────────────────────────────────
+    # ── 待開通頁(契約 §4.3 的雞生蛋解法)────────────────────────
+    @router.get("/pending", include_in_schema=False, response_class=HTMLResponse)
+    def pending(request: Request, session=Depends(_current)):
+        """待開通頁:顯示**本人的 `sub`** 供自助交給管理員。
+
+        回傳: 200 HTML(已登入即可見,不要求任何角色)
+        副作用: 無
+
+        🔴 為什麼是 200 而不是 403:這一頁本身就是 403 的**去處**。
+        把它也做成 403 會讓使用者看到一個沒有下一步的錯誤頁,
+        而契約 §4.3 明文建議「待開通頁顯示使用者自己的 sub 供自助取得」。
+        """
+        _key, data = session
+        return templates.TemplateResponse(
+            request=request,
+            name="pending.html",
+            context={"sub": data.sub, "base_path": settings.base_path},
+            headers={"Cache-Control": "no-store"},
+        )
+
     @router.get("/me")
     def me(session=Depends(_current)):
         """回報「我是誰」。
@@ -320,9 +325,16 @@ def build_auth_router(*, settings, oidc: OidcClient, store: SessionStore, clock)
         🔴 只回 `sub`,不回姓名/email——本服務不取那些 claim。
         """
         _key, data = session
+        from app.db import session_scope
+        from app.repo import get_user
+
+        with session_scope() as db:
+            user = get_user(db, data.sub)
+            roles = user.active_roles() if user else []
         return {
             "authenticated": True,
             "sub": data.sub,
+            "roles": roles,
             "access_expires_in": int(data.access_expires_at - clock()),
         }
 

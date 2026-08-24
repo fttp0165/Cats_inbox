@@ -1,0 +1,68 @@
+{# 角色後台(T05)。零外部資源、light 寫死。
+   🔴 這是唯一顯示 display_name 的地方(契約 §4.2a L1:僅供管理後台顯示),
+      且必須顯示**資料時間**——過期不隱藏而是標示(L1 第 3 條)。#}
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>角色後台 — 站內信</title>
+  <style>
+    :root { color-scheme: light; }
+    body { margin:0; padding:2rem; background:#f6f7f9; color:#1f2328;
+           font-family: system-ui, -apple-system, "Segoe UI", "Noto Sans TC", sans-serif; }
+    h1 { font-size:1.25rem; margin:0 0 .25rem; }
+    .note { color:#57606a; font-size:.9rem; margin:0 0 1.5rem; line-height:1.6; }
+    table { border-collapse:collapse; background:#fff; width:100%;
+            border:1px solid #d8dee4; border-radius:6px; overflow:hidden; }
+    th, td { text-align:left; padding:.6rem .75rem; border-bottom:1px solid #eaeef2;
+             font-size:.92rem; vertical-align:top; }
+    th { background:#f6f8fa; font-weight:600; }
+    tr:last-child td { border-bottom:none; }
+    code { font-size:.85rem; word-break:break-all; }
+    .off { color:#8b949e; }
+    button { font-size:.85rem; padding:.15rem .5rem; cursor:pointer; }
+    form.inline { display:inline; }
+    .stamp { color:#8b949e; font-size:.8rem; display:block; }
+  </style>
+</head>
+<body>
+  <h1>角色後台</h1>
+  <p class="note">
+    自動授 <code>reader</code>:{% if auto_grant_reader %}<strong>開啟</strong>{% else %}<strong>關閉</strong>(portal 已撤回核可,或本地刻意關閉){% endif %}。
+    <br>顯示名稱僅為快取副本,非真相來源;真相在 Keycloak。空白表示沒有快取值(不即時查 IdP)。
+  </p>
+  <table>
+    <tr>
+      <th>sub</th><th>顯示名稱(快取)</th>
+      {% for r in all_roles %}<th>{{ r }}</th>{% endfor %}
+    </tr>
+    {% for row in rows %}
+    <tr>
+      <td><code>{{ row.sub }}</code>{% if not row.is_active %} <span class="off">(帳號已停用)</span>{% endif %}</td>
+      <td>
+        {{ row.display_name }}
+        {# 🔴 資料時間必須顯示,過期不隱藏而是標示(§4.2a L1 第 3 條)#}
+        <span class="stamp">更新於 {{ row.display_name_updated_at or "—" }}</span>
+      </td>
+      {% for r in all_roles %}
+      <td>
+        {% set on = row.roles.get(r, False) %}
+        <form class="inline" method="post" action="{{ base_path }}/admin/users/roles">
+          <input type="hidden" name="sub" value="{{ row.sub }}">
+          <input type="hidden" name="role" value="{{ r }}">
+          <input type="hidden" name="enabled" value="{{ '0' if on else '1' }}">
+          <button type="submit">{{ '停用' if on else '啟用' }}</button>
+        </form>
+        {% if not on %}<span class="off">off</span>{% endif %}
+      </td>
+      {% endfor %}
+    </tr>
+    {% endfor %}
+  </table>
+  <form method="post" action="{{ base_path }}/admin/users/purge-display-names" style="margin-top:1.5rem">
+    <input type="text" name="sub" placeholder="sub(留空=整批)" size="40">
+    <button type="submit">清除顯示名稱快取</button>
+  </form>
+</body>
+</html>

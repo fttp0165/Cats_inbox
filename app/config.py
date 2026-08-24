@@ -55,6 +55,12 @@ class Settings:
     # ── 首登開通(契約 §4.3:bootstrap 管理員清單,每次登入比對)──
     bootstrap_admin_subs: str   # 以逗號分隔的 sub 清單;空=無 bootstrap 管理員
 
+    # 🔴 DEC-16 的全域開關(portal 核可條件 **C4** 的落點:portal 得單方撤回)。
+    #    關掉之後首登得到**零角色**,回到全 deny。
+    #    ⚠ 這是 env,**需重啟才生效**。撤回是罕見且刻意的動作,可接受;
+    #      但這是已知限制,不是沒想到——要「即時撤回」需一張設定表(另案)。
+    auto_grant_reader: bool
+
 
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:
@@ -75,4 +81,7 @@ def get_settings() -> Settings:
         oidc_client_secret=_env("INBOX_OIDC_CLIENT_SECRET"),
         session_secret=_env("INBOX_SESSION_SECRET"),
         bootstrap_admin_subs=_env("INBOX_BOOTSTRAP_ADMIN_SUBS"),
+        # 預設開啟(portal 2026-08-18 已核可);設 "0"/"false" 即回到全 deny
+        auto_grant_reader=_env("INBOX_AUTO_GRANT_READER", "1").lower()
+        not in ("0", "false", "no", "off"),
     )

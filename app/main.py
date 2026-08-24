@@ -70,16 +70,30 @@ def create_app(*, transport=None, clock=None) -> FastAPI:
     #    **不註冊**登入路由,而不是註冊一個會在使用者點下去才炸的路由——
     #    「還沒設定完」因此是一個明確狀態(404),不是一個 500。
     if settings.oidc_issuer and settings.session_secret:
+        from app.routes_admin import build_admin_router
         from app.routes_auth import build_auth_router
+        from app.routes_business import build_business_router
         from app.session import SessionStore
+
+        # 🔴 建立 engine,但**不** create_all —— schema 的唯一權威是
+        #    `alembic/versions/`(見 `app/db.py` 檔頭)。engine 是 lazy 的,
+        #    所以 DB 不可用時建立本身不會失敗,健康檢查也仍然是 200。
+        from app.db import init_engine
+
+        init_engine(settings.db_url or "postgresql+psycopg://localhost/cats_inbox")
 
         oidc = OidcClient(settings, transport=transport, clock=now)
         store = SessionStore(settings.session_secret, clock=now)
         router.include_router(build_auth_router(
             settings=settings, oidc=oidc, store=store, clock=now
         ))
+        router.include_router(build_business_router())
+        router.include_router(build_admin_router(settings=settings))
+        # `app.state` 是 `app/deps.py` 取用 store/oidc/clock 的唯一途徑
+        # ——相依函式拿不到 closure,只拿得到 request。
         app.state.oidc = oidc
         app.state.session_store = store
+        app.state.clock = now
 
     app.include_router(router)
 

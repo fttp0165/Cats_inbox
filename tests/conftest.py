@@ -148,7 +148,7 @@ def _set_oidc_env(monkeypatch) -> None:
 
 
 @pytest.fixture()
-def app_client(idp, clock, monkeypatch):
+def app_client(idp, clock, monkeypatch, db_session, sqlite_url):
     """建立掛好 auth 路由的 TestClient。
 
     回傳: (TestClient, transport)
@@ -162,6 +162,8 @@ def app_client(idp, clock, monkeypatch):
     from fastapi.testclient import TestClient
 
     _set_oidc_env(monkeypatch)
+    # T05 起建號要寫 DB;`db_session` fixture 已建好 schema 並共用同一個 engine
+    monkeypatch.setenv("INBOX_DB_URL", sqlite_url)
     import app.config as config
 
     config.get_settings.cache_clear()
@@ -191,3 +193,126 @@ def _login(http, transport) -> None:
         follow_redirects=False,
     )
     assert r.status_code == 302, f"callback 應 302,實得 {r.status_code} {r.text[:200]}"
+
+
+# ─────────────────────────────────────────────────────────────────────
+# T05:資料庫 fixture
+#
+# 🔴 **兩種資料庫刻意分工:**
+#   · 應用層行為測試(建號、角色、403)用 **SQLite 檔案**——可攜、CI 跑得動、
+#     每個 test 一個乾淨的庫。
+#   · **migration 測試用真的 PostgreSQL**(`tests/test_migration.py`)——
+#     SQLite 對 DDL 太寬鬆,在它上面綠的 migration 到 PG 上可能直接失敗,
+#     而那會發生在部署當下。
+#
+#   ⚠ 這個分工有一個**已知的盲點**:應用層用的 schema 是 `create_all()`
+#     從 model 產生的,不是 migration 產生的。兩者若漂移,應用層測試不會發現。
+#     `tests/test_migration.py::test_schema_has_no_identity_columns` 就是補這個
+#     盲點——它驗的是**migration 本身**產出的 schema。
+# ─────────────────────────────────────────────────────────────────────
+@pytest.fixture()
+def sqlite_url(tmp_path) -> str:
+    """每個 test 一個獨立的 SQLite 檔(不用 :memory:,因為多連線看不到同一個庫)。"""
+    return f"sqlite+pysqlite:///{tmp_path / 'inbox.db'}"
+
+
+@pytest.fixture()
+def db_session(sqlite_url):
+    """建好 schema 的 DB session,且應用與測試**共用同一個 engine**。
+
+    回傳: Session
+    副作用: 建表;測試結束關閉
+
+    🔴 共用 engine 是關鍵:應用透過 `app.db.session_scope()` 寫入,
+    測試若另開一個 engine 就會看到另一個庫,斷言會全部失敗——
+    而失敗訊息會看起來像「建號沒生效」,查錯方向。
+    """
+    from app.db import init_engine
+    from app.models import Base
+
+    engine = init_engine(sqlite_url)
+    Base.metadata.create_all(engine)
+    from sqlalchemy.orm import Session
+
+    session = Session(bind=engine, expire_on_commit=False)
+    yield session
+    session.close()
+
+
+def _build_app(idp, clock, monkeypatch, sqlite_url, **env):
+    """共用的 app 建置流程(T05 的三個 app fixture 只差 env)。"""
+    from fastapi.testclient import TestClient
+
+    _set_oidc_env(monkeypatch)
+    monkeypatch.setenv("INBOX_DB_URL", sqlite_url)
+    for k, v in env.items():
+        monkeypatch.setenv(k, v)
+
+    import app.config as config
+
+    config.get_settings.cache_clear()
+
+    import app.main as main
+
+    importlib.reload(main)
+    transport = FakeTransport(idp, clock)
+    application = main.create_app(transport=transport, clock=clock)
+    return TestClient(application, base_url="https://testserver"), transport
+
+
+@pytest.fixture()
+def app_client_no_autogrant(idp, clock, monkeypatch, db_session, sqlite_url):
+    """自動授 reader **關閉**(核可條件 C4:portal 單方撤回後回到全 deny)。"""
+    client, transport = _build_app(
+        idp, clock, monkeypatch, sqlite_url, INBOX_AUTO_GRANT_READER="0"
+    )
+    yield client, transport
+    import app.config as config
+
+    config.get_settings.cache_clear()
+
+
+@pytest.fixture()
+def app_client_bootstrap(idp, clock, monkeypatch, db_session, sqlite_url):
+    """把替身那個 sub 放進 bootstrap 管理員清單。"""
+    client, transport = _build_app(
+        idp, clock, monkeypatch, sqlite_url,
+        INBOX_BOOTSTRAP_ADMIN_SUBS="11111111-2222-3333-4444-555555555555",
+    )
+    yield client, transport
+    import app.config as config
+
+    config.get_settings.cache_clear()
+
+
+# ─────────────────────────────────────────────────────────────────────
+# migration 測試專用:真的 PostgreSQL
+# ─────────────────────────────────────────────────────────────────────
+@pytest.fixture()
+def pg_engine():
+    """連到 `INBOX_TEST_DB_URL`,並在測試前後把 schema 清乾淨。
+
+    副作用: DROP 掉本測試會用到的表與 alembic 版本表
+    ⚠ 只跑在丟棄式的本機庫上(`tests/pg_local.sh` 起的),不指向任何正式庫。
+    """
+    import os
+
+    from sqlalchemy import create_engine, text
+
+    url = os.environ["INBOX_TEST_DB_URL"]
+    engine = create_engine(url, future=True)
+    with engine.begin() as conn:
+        for tbl in ("user_role", "app_user", "alembic_version"):
+            conn.execute(text(f"DROP TABLE IF EXISTS {tbl} CASCADE"))
+    yield engine
+    engine.dispose()
+
+
+@pytest.fixture()
+def alembic_cfg(pg_engine):
+    """指向 repo 內 `alembic.ini` 的 Config(連線字串由 env.py 自 env 讀)。"""
+    from alembic.config import Config
+
+    cfg = Config(str(ROOT / "alembic.ini"))
+    cfg.set_main_option("script_location", str(ROOT / "alembic"))
+    return cfg

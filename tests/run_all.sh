@@ -41,9 +41,20 @@ if ls test_*.py >/dev/null 2>&1; then
   if [ -z "$PY" ]; then
     echo "▶ pytest 失敗:找不到 python3 / python / py,請確認 Python 已安裝且在 PATH 上"
     FAILED=$((FAILED+1))
-  elif "$PY" -m pytest -q . ; then
+  elif OUT="$("$PY" -m pytest -q . 2>&1)"; then
+    printf '%s\n' "$OUT"
     echo "▶ pytest 通過"
+    # 🔴 把 skip 數量講出來。「跳過」與「通過」在 `-q` 的最後一行看起來
+    #    差不多,而 T05 的 migration 測試在沒有真 PostgreSQL 時**整批 skip**
+    #    ——那不是覆蓋,是沒測。不講出來的話,「全綠」會被讀成「都驗過了」。
+    SKIPPED="$(printf '%s' "$OUT" | grep -oE '[0-9]+ skipped' | tail -1)"
+    if [ -n "$SKIPPED" ]; then
+      echo "⚠ 其中 $SKIPPED —— 那不是通過,是沒測。"
+      echo "   migration 測試需要真的 PostgreSQL:"
+      echo "     eval \"\$(bash tests/pg_local.sh start)\" && bash tests/run_all.sh"
+    fi
   else
+    printf '%s\n' "${OUT:-}"
     echo "▶ pytest 失敗(若為 ModuleNotFoundError:pip install -r requirements-dev.txt)"
     FAILED=$((FAILED+1))
   fi

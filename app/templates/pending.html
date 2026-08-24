@@ -1,0 +1,39 @@
+{# 待開通頁(T05)。契約 §4.3 的雞生蛋解法:顯示本人 sub 供自助取得。
+   🔴 零外部資源、light 寫死(§4.10 禁外部 CDN、憲法第四條 1/2)。
+   ⚠ T10 加嚴格 CSP 時 <style> 要補 nonce。#}
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>待開通 — 站內信</title>
+  <style>
+    :root { color-scheme: light; }
+    body { margin:0; min-height:100vh; display:flex; align-items:center; justify-content:center;
+           background:#f6f7f9; color:#1f2328;
+           font-family: system-ui, -apple-system, "Segoe UI", "Noto Sans TC", sans-serif; }
+    .card { background:#fff; border:1px solid #d8dee4; border-radius:8px;
+            padding:2rem 2.5rem; max-width:34rem; }
+    h1 { font-size:1.25rem; margin:0 0 .75rem; }
+    p { margin:0 0 1rem; color:#57606a; line-height:1.7; }
+    code { background:#f0f2f4; border:1px solid #d8dee4; border-radius:4px;
+           padding:.25rem .5rem; font-size:.95rem; word-break:break-all; }
+    .sub { display:block; margin:.5rem 0 1.25rem; }
+    ul { color:#57606a; line-height:1.7; padding-left:1.25rem; margin:0 0 1rem; }
+  </style>
+</head>
+<body>
+  <main class="card">
+    <h1>你的帳號尚未開通</h1>
+    <p>你已成功登入,但目前沒有可用的功能權限。請把下面這串識別碼交給管理員開通:</p>
+    {# 🔴 顯示本人的 sub —— 契約 §4.3 建議的雞生蛋解法。
+       少了這一半,第一個使用者會卡在一個看不出下一步是什麼的 403。#}
+    <code class="sub">{{ sub }}</code>
+    <ul>
+      <li>這串是你在統一入口的身分識別碼,不是密碼,可以安全地貼給管理員。</li>
+      <li>本系統**不會**保存你的姓名、信箱或密碼。</li>
+    </ul>
+    <p><a href="{{ base_path }}/logout">登出</a></p>
+  </main>
+</body>
+</html>

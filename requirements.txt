@@ -8,3 +8,11 @@ itsdangerous==2.2.0
 # (契約 §3.2 只接受 RS256;沒有 crypto extra 時 PyJWT 只能做 HMAC)
 PyJWT[crypto]==2.10.1
 httpx==0.28.1
+
+# ── 資料層與後台表單(T05)──
+sqlalchemy==2.0.36
+alembic==1.14.0
+# psycopg 3 的 binary wheel:免在映像裡裝編譯鏈
+psycopg[binary]==3.2.3
+# FastAPI 處理 <form> POST 需要它(角色後台的派/停角色按鈕)
+python-multipart==0.0.20

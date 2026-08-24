@@ -1,8 +1,8 @@
 # cats-inbox TDD 測試計畫表
 
 **建立日期:** 2026-08-15 09:40
-**最後更新:** 2026-08-24 19:10
-**版本:** v1.4
+**最後更新:** 2026-08-24 23:10
+**版本:** v1.5
 
 > 依 `docs/開發計畫書.md` §3 的架構逐元件展開:**每個任務動工前該先寫哪一支會失敗的測試**。
 > 憲法第三條:先寫紅測試釘住預期行為,才改程式;「測試全綠」指**實際跑過看到綠燈**。
@@ -87,10 +87,20 @@ front-channel logout(SLO)         test_auth.py(T06:免認證、冪等、只刪 c
 | T04 | `test_auth.py::test_refresh_failure_logs_user_out` | refresh 回 `invalid_grant`(帳號被停用)→ 立刻 **401**,不得沿用舊 session | 契約 §3.3 用 300 秒 access token 換「收權即時性」;失敗時沿用舊 session 會讓收權**變成假的**,而畫面上完全看不出來 |
 | T04 | `test_auth.py::test_auth_routes_absent_without_issuer` | 未設 `INBOX_OIDC_ISSUER`/`INBOX_SESSION_SECRET` 時登入路由 **404**,健康檢查照常 200 | 回滾閥門(比照 portal 對 PLM 要求「旗標預設 off、off 時行為逐字不變」)。讓「部署了但 secret 還沒到」是明確狀態,不是使用者點下去才炸的 500 |
 | T04 | `test_skeleton.py::test_env_example_oidc_values_match_portal_delivery_shape` | `.env.example` 的 `INBOX_OIDC_INTERNAL_BASE` **不得含 `/realms/`**;`INBOX_OIDC_ISSUER` 必須含且為 https | 🔴 實際踩到才補:兩者形狀不一致會組出 `/realms/sporton/realms/sporton` → discovery 404,而**它只在第一個真人登入時出現**,離線測試全綠 |
-| T05 | `test_auth.py::test_first_login_creates_user_with_sub_only` | 新 sub 首登後 DB 只多一列且**無 email/姓名/密碼欄** | 契約 §4.2 身分落地 |
-| T05 | `test_auth.py::test_zero_role_user_gets_403_with_own_sub_shown` | 無角色打業務 API → 403;待開通頁含本人 `sub` | deny-by-default + 雞生蛋解法(§4.3) |
-| T05 | `test_auth.py::test_bootstrap_admin_applies_to_existing_pending_user` | **已存在的 pending 帳號**寫進清單後再登入→升級;已 disabled 者不得復活;重複登入 idempotent | 🔴 upload-program 踩過:只在「建號當下」比對,對第一個管理員**永遠不會生效** |
-| T05 | `test_auth.py::test_display_name_cache_never_in_authz_path` | 授權判定不得讀 `display_name`(源碼層檢查);快取清除工具可清孤兒列 | 契約 §4.2a L1 第 4/7 條 |
+| T05 | `test_authz.py::test_first_login_creates_user_with_sub_only` | 新 sub 首登後 DB 只多一列;**schema 無 email/password/name 欄** | 契約 §4.2。schema 層斷言比行為層強——行為可以「現在剛好沒寫」,欄位不存在就是**寫不進去** |
+| T05 | `test_authz.py::test_login_is_idempotent_no_duplicate_rows` | 同一 `sub` 重複登入不得長出第二列 | 「每次登入都 INSERT」在單人測試完全看不出來,要等第二次登入才出現,症狀是**同一個人有兩份角色** |
+| T05 | `test_authz.py::test_first_login_grants_reader` | 首登即有 `reader` | DEC-16 經核可的偏離 |
+| T05 | `test_authz.py::test_reader_cannot_send_message_403` | 🔴 **反向**:reader 寄信 → **403** | 核可條件 **C3**。**過寬的角色沒有症狀**——功能上一切正常,只在有人寄了不該寄的信時才顯現 |
+| T05 | `test_authz.py::test_reader_cannot_publish_announcement_403` | 🔴 **反向**:reader 發公告 → **403** | 同上;401 是錯的答案(那代表憑證無效,呼叫方會查錯方向) |
+| T05 | `test_authz.py::test_reader_can_be_disabled_per_user` | 停用後 403,**且下一次登入不得復活** | 核可條件 **C2**。「不得復活」是這條的一半——少了它,自動授與會把它加回來而畫面完全正常,整個停用是**表演** |
+| T05 | `test_authz.py::test_auto_grant_can_be_globally_disabled` | 全域開關關掉 → 首登**零角色**、業務 API 403 | 核可條件 **C4**(portal 得單方撤回) |
+| T05 | `test_authz.py::test_zero_role_user_gets_403_with_own_sub_shown` | 待開通頁 200 且**顯示本人 `sub`** | 契約 §4.3 的雞生蛋解法。少了這一半,第一個使用者會卡在一個**看不出下一步是什麼**的 403 |
+| T05 | `test_authz.py::test_bootstrap_admin_applies_to_existing_pending_user` | 清單比對**每次登入**都做;冪等;**已停用者不得復活** | 🔴 upload-program 踩過:只在建號當下比對,對第一個管理員**永遠不會生效**(他早就登入過了) |
+| T05 | `test_authz.py::test_display_name_never_read_in_authz_path` | **AST 源碼檢查**:`app/authz.py` 不得觸及 `display_name` | 契約 §4.2a L1 第 4 條。行為測試只證明「這條路徑現在沒讀」,源碼檢查證明「**沒有任何一條路徑讀得到**」 |
+| T05 | `test_authz.py::test_display_name_only_written_from_own_login_token` | **AST 源碼檢查**:對 `display_name` 的賦值只能出現在 `app/repo.py` | 「僅得自本人登入 token」的可驗證性靠「寫入路徑只有一條」;多一條不會有錯誤訊息 |
+| T05 | `test_authz.py::test_display_name_purge_tool_clears_bulk_and_single` | 單筆與整批都要**真的清得掉**,且回報清了幾列 | §4.2a L1 第 7 條。一個永遠成功卻什麼都沒清的工具**比沒有工具更糟**——它讓人以為已經清了 |
+| T05 | `test_authz.py::test_admin_backend_requires_admin_role` | reader 進後台 403、admin 200;且後台**顯示快取的資料時間** | §4.2a L1 第 3 條(過期不隱藏而是標示) |
+| T05 | `test_migration.py`(3 支) | up→down→up 在**真的 PostgreSQL** 上通過;down 後表**真的不見**;每個 version 的 `downgrade()` 不得是 `pass` | 🔴 SQLite 對 DDL 太寬鬆,在它上面綠的 migration 到 PG 可能**部署當下**才失敗。⚠ **本機只有 PG16**,**PG15 演練留 T11**;無 PG 時 **skip 而非 pass** |
 | T06 | `test_auth.py::test_frontchannel_logout_is_idempotent_and_unauthenticated` | 免認證呼叫 → 204;重複呼叫 → 204;帶/不帶 `sid`+`iss` 皆 204 | 契約 §10.3;iframe 載入時不會帶 token |
 | T06 | `test_auth.py::test_frontchannel_logout_only_deletes_cookie` | 端點不得建立 session、不得寫業務資料 | §10.3「被任意第三方呼叫的最壞後果必須是使用者被登出」 |
 | T06 | `test_logout.py::test_frontchannel_route_is_registered_verbatim` | 打 client 登記值(無斜線)必須 **204**;307=我方 route 多了斜線、404=路徑不存在。帶斜線的變體預期 **307**(若也直接 204 表示兩個變體都註冊了),且 307 必須**保留 `sid`/`iss`** | 🔴 §10.3a:Keycloak 拿登記值去**呼叫**而非比對,「無斜線」不是規定、**逐字相同**才是。差一字元的症狀是**端點零呼叫**,與「設定沒套用」完全相同(PLM 2026-08-14 前例)。⚠ **本列於 2026-08-24 更正**,原寫「帶斜線變體必須 404(證明沒有靜默 redirect)」——見下方更正說明 |
@@ -158,8 +168,10 @@ front-channel logout(SLO)         test_auth.py(T06:免認證、冪等、只刪 c
 | 應用層 4 項 | ✅ 已跑、全綠 |
 | **auth 層 12 項(T04)** | ✅ **已跑、全綠**(2026-08-21) |
 | **登出層 9 項(T06)** | ✅ **已跑、全綠**(2026-08-24) |
+| **授權層 13 項(T05)** | ✅ **已跑、全綠**(2026-08-24);含 2 支 AST 源碼檢查 |
+| **migration 層 3 項(T05)** | ✅ 已在**真的 PostgreSQL 16.13** 上跑過。🔴 **PG15 未演練**(本機無 PG15、無 docker daemon)——留 T11 於 VM 補;⚠ 無 PG 時本組 **skip**,`run_all.sh` 會把 skip 數量印出來 |
 | M3–M6 測試 | ⬜ **尚未撰寫**(規格見 §3;不得視為已覆蓋)。⚠ T14 的規格已於 2026-08-18 由 portal 核定,五支測試的斷言已具體化 |
-| T05 測試 | ⬜ 尚未撰寫。⚠ 它需要 `app_user` 表,而建表排在 T07——動工前要先決定 migration 是否提前 |
+| T07–T12 / T14–T17 測試 | ⬜ 尚未撰寫(規格見 §3)|
 | 真 IdP / gateway 冒煙 | ⬜ **尚未執行**(client 已核發,但 secret 尚未進本服務;需 T11 路由。CI 跑不動) |
 | `docker compose config` 解析 | ✅ 已於本機驗過(Compose v5.1.1);**容器實際啟動尚未驗**(本環境無 docker daemon) |
 
@@ -233,12 +245,43 @@ session 其實還活著,抄到 cookie 值的人仍然是登入狀態。已補兩
 伺服器端 session 數必須減一、且**重放抄走的 cookie 必須 401**。
 
 
+### 5.4 突變檢查(T05,2026-08-24)
+
+| 故意改壞 | 對應測試 | 結果 |
+|---|---|---|
+| `reader` 多拿 `send_message`(C1 範圍放寬) | `test_reader_cannot_send_message_403` | ✅ 紅 |
+| 無權時回 401 而非 403 | `test_reader_cannot_publish_announcement_403` | ✅ 紅 |
+| `grant_role` 復活已停用的角色 | `test_reader_can_be_disabled_per_user` | ✅ 紅 |
+| bootstrap 清單只在建號當下比對 | `test_bootstrap_admin_applies_to_existing_pending_user` | ✅ 紅 |
+| 全域開關失效(撤回不生效) | `test_auto_grant_can_be_globally_disabled` | ✅ 紅 |
+| 每次登入都 INSERT 新列 | `test_login_is_idempotent_no_duplicate_rows` | ✅ 紅 |
+| purge 什麼都不清但回報成功 | `test_display_name_purge_tool_clears_bulk_and_single` | ✅ 紅 |
+| 授權判定改讀 `display_name` | `test_display_name_never_read_in_authz_path` | ✅ 紅 |
+| `downgrade()` 改成 `pass` | `test_migration.py::test_downgrade_is_not_a_stub` | ✅ 紅 |
+| 後台不驗 `admin` 角色 | `test_admin_backend_requires_admin_role` | ✅ 紅 |
+
+**10 項全被抓到。**
+
+### 5.5 T05 期間找到的兩個測試自身的缺陷
+
+1. 🔴 **相對路徑讓同一支測試在兩個入口點結果不同。** 兩支 AST 檢查原本寫
+   `pathlib.Path("app/authz.py")`,而 `run_all.sh` 是 `cd tests/` 之後才跑 pytest
+   ——從 repo 根跑 **61 綠**、經 `run_all.sh` 跑 **2 紅**,而紅的訊息看起來像
+   程式壞了。已一律改用 conftest 的 `ROOT` 組路徑。
+2. `test_downgrade_is_not_a_stub` 把**所有** `ast.Expr` 都當 docstring 濾掉,
+   而 `op.drop_table(...)` 本身就是一個 expression statement ——
+   於是每一個**正確的** downgrade 都會被判成空的。已改為只去掉開頭的 docstring。
+   ⚠ 它第一次跑就紅,而**紅的原因在測試自己身上**;真正的 up→down→up 演練
+   同時獨立通過,兩個角度裡不夠力的那個剛好是它。
+
+
 ---
 
 ## 版本歷史
 
 | 版本 | 日期 | 修改人 | 摘要 |
 |---|---|---|---|
+| v1.5 | 2026-08-24 | Benny | **T05 完工回寫**:T05 規格由 4 支擴為 **13 支 + migration 3 支**(檔案 `test_authz.py` / `test_migration.py`),逐支寫出「壞掉時沒有症狀」的理由;§5 覆蓋現況新增授權層與 migration 層,並**誠實標明 PG15 未演練**(本機只有 PG16.13,無 docker daemon);§5.4 突變檢查 **10/10 全被抓到**;§5.5 記兩個**測試自身**的缺陷——🔴 相對路徑讓同一支測試「從 repo 根綠、經 `run_all.sh` 紅」,以及 `test_downgrade_is_not_a_stub` 把 `op.drop_table` 當成 docstring 濾掉而誤判每個正確的 downgrade |
 | v1.4 | 2026-08-24 | Benny | **T06 完工回寫**:T06 規格由 3 支擴為 7 支(檔案由 `test_auth.py` 改為 `test_logout.py`)。🔴 **§5.2 記一處規格更正**:原寫「帶斜線變體必須 404」,實測 FastAPI 回 **307 且保留 `sid`/`iss`**,重判後認定那個 redirect 在正式環境是**安全網**(登記錯字仍能生效)而非危害,改成「打登記值必須 204」——不依賴 redirect 行為;同時放棄「列舉 `app.routes`」的做法,因為本版 FastAPI 把 include 的結果包成 `_IncludedRouter`,列舉頂層**一個實際端點都拿不到**。🔴 **§5.3 突變檢查 6/6**,其中「先導 IdP 再清」第一次**未被抓到**——原測試只斷言 /me 回 401,而刪 cookie 也會讓它 401,伺服器端 session 其實還活著。已補「session 數減一」與「重放抄走的 cookie 必須 401」 |
 | v1.3 | 2026-08-21 | Benny | **T04 完工回寫**:新增五支測試規格——`test_login_route_issues_pkce_s256`(PKCE 退化成 plain **不會有症狀**)、`test_state_mismatch_is_rejected`(要連「沒建 session」一起斷言)、`test_refresh_failure_logs_user_out`(不然 §3.3 換來的收權即時性是假的)、`test_auth_routes_absent_without_issuer`(回滾閥門)、`test_env_example_oidc_values_match_portal_delivery_shape`(🔴 實際踩到:`.env.example` 與 portal 交付檔的 `INTERNAL_BASE` 形狀不一致,症狀只在第一個真人登入時出現)。並記錄 §5 新增的**突變檢查**結果:9 項突變 8 項被測試抓到 |
 | v1.2 | 2026-08-18 | Benny | **T03b 逐條對齊帶進來的五支測試**:①T04 `test_fake_idp_token_carries_real_claims`(契約 v3.2 的 `at_hash` 實例——PLM 400 多支離線測試沒抓到,因為測試自己造的 token 沒那個 claim);②T04 `test_redirect_uri_matches_registered_value`(v2.14:PLM 因 `reverse()` 回後註冊者而首登即 mismatch,而 **app 的 log 是空的**);③T04 手動「壞 code 驗 secret」(v2.17:用必定失敗的請求證明另一件事,不需真人登入);④T06 `test_frontchannel_route_matches_client_registration_exactly`(§10.3a:逐字相同才是規格,帶斜線的變體必須 404);⑤T14 `test_unregistered_azp_is_denied`(§11.5:**內網不是身分**)。並**更正一處**:T14 缺 scope 的預期由 401 改為 **403**——§11.5 明訂兩者分開,混用會讓呼叫方查不出是憑證錯還是授權不足 |

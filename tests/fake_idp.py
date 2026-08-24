@@ -191,6 +191,14 @@ class FakeIdP:
             "sid": "sid-abc-123",
             "preferred_username": "tester",
             "email_verified": True,
+            # 🔴 `profile` scope 在位時 Keycloak 會給這三個(portal 建 client 時
+            #    刻意保留 profile、只移除 email)。少給它們就是**同一個坑的第二次**:
+            #    T05 的 L1 快取讀 `name`,而替身沒有 `name` 時測試會說
+            #    「登入時應已寫入 L1 快取」失敗 —— 看起來像程式沒寫,
+            #    其實是替身比真實 IdP 寬鬆(與 v3.2 的 `at_hash` 完全同型)。
+            "name": "測試 使用者",
+            "given_name": "使用者",
+            "family_name": "測試",
         }
         if nonce is not None:
             # nonce 只出現在授權碼流程換來的 id_token;refresh 換來的不帶
