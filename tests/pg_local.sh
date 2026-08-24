@@ -31,13 +31,16 @@ case "${1:-start}" in
     fi
     su "$RUNAS" -c "PATH=$PGBIN:\$PATH pg_ctl -D $PGDIR -o '-p $PGPORT -k $PGDIR' -l $PGDIR/pg.log status" >/dev/null 2>&1 \
       || su "$RUNAS" -c "PATH=$PGBIN:\$PATH pg_ctl -D $PGDIR -o '-p $PGPORT -k $PGDIR' -l $PGDIR/pg.log -w start" >/dev/null 2>&1
-    # 兩個資料庫:migration 測試會 upgrade/downgrade,不能與應用測試共用
-    for db in cats_inbox_mig; do
+    # 兩個資料庫:migration 跑在 _mig,`create_all()` 跑在 _models。
+    # 🔴 分開是 T07 的 `test_models_match_migration_schema` 需要的 ——
+    #    要比對兩種建法的結果,它們不能建在同一個庫裡互相覆蓋。
+    for db in cats_inbox_mig cats_inbox_models; do
       "$PGBIN/psql" -h "$PGDIR" -p "$PGPORT" -U cats_inbox -d postgres -tAc \
         "select 1 from pg_database where datname='$db'" 2>/dev/null | grep -q 1 \
         || "$PGBIN/createdb" -h "$PGDIR" -p "$PGPORT" -U cats_inbox "$db" 2>/dev/null
     done
     echo "export INBOX_TEST_DB_URL='postgresql+psycopg://cats_inbox@/cats_inbox_mig?host=$PGDIR&port=$PGPORT'"
+    echo "export INBOX_TEST_MODELS_DB_URL='postgresql+psycopg://cats_inbox@/cats_inbox_models?host=$PGDIR&port=$PGPORT'"
     ;;
   stop)
     su "$RUNAS" -c "PATH=$PGBIN:\$PATH pg_ctl -D $PGDIR -m fast stop" >/dev/null 2>&1

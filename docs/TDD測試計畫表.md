@@ -1,8 +1,8 @@
 # cats-inbox TDD 測試計畫表
 
 **建立日期:** 2026-08-15 09:40
-**最後更新:** 2026-08-24 23:10
-**版本:** v1.5
+**最後更新:** 2026-08-24 23:35
+**版本:** v1.6
 
 > 依 `docs/開發計畫書.md` §3 的架構逐元件展開:**每個任務動工前該先寫哪一支會失敗的測試**。
 > 憲法第三條:先寫紅測試釘住預期行為,才改程式;「測試全綠」指**實際跑過看到綠燈**。
@@ -117,6 +117,15 @@ front-channel logout(SLO)         test_auth.py(T06:免認證、冪等、只刪 c
 |---|---|---|---|
 | T07 | `test_skeleton.py::test_migration_chain_reversible` | 每條 migration 有 backward;up→down→up 演練通過 | 共通紅線:動資料的 migration 必須可回滾 |
 | T07 | `test_messages.py::test_schema_has_no_pii_columns` | 表結構無 email/姓名/密碼欄(`display_name` 除外且 nullable) | 契約 §4.2 |
+| T07 | `test_schema.py::test_migration_0002_up_down_up` | 三張表出現/消失;**降到 `0001` 時 T05 的兩張表必須留著** | 🔴 後半是重點:`0002` 的 `downgrade()` 若手誤 drop 了 `app_user`,不看就不會發現——而那在正式環境是**把所有人的身分與角色刪掉** |
+| T07 | `test_schema.py::test_message_schema_matches_upstream` | 上游 §4.1 欄位齊;**無** email/姓名/密碼欄;`body` 是 TEXT | VARCHAR(n) 超長在 PG 上是**報錯**,症狀是「某些通知推不進來」 |
+| T07 | `test_schema.py::test_message_recipient_sub_has_no_fk` | 🔴 斷言外鍵**不存在** | 推送 API 必須能推給**從未登入過的人**;設了外鍵那些推送被資料庫擋掉,而**收件人不會知道有東西被丟掉**。這條擋的是「日後有人順手把外鍵補上」——那個動作看起來在修缺漏,實際是把能力靜默關掉 |
+| T07 | `test_schema.py::test_announcement_read_has_fks_and_cascades` | 兩個外鍵都在且 CASCADE | ⚠ 與上一條**相反**是刻意的:標公告已讀者必然已登入過。理由寫在兩邊註釋裡,否則日後看起來像不一致 |
+| T07 | `test_schema.py::test_announcement_read_unique_per_person` | `(announcement_id, user_sub)` 唯一 | 上游 §4.2「公告不逐人複製」。沒有約束時重複標已讀會長出重複列,而**已讀在畫面上仍然正常**,只有列數在悄悄長 |
+| T07 | `test_schema.py::test_unread_count_index_exists` | `(recipient_sub, is_read)` 有索引 | A.1 明訂未讀鈴鐺 **30 秒輪詢**;無索引時是全表掃描,而**資料少時完全看不出來**,症狀是「整個入口變慢」 |
+| T07 | `test_schema.py::test_category_check_rejects_unknown_value` | 真的 INSERT 一筆壞值看它被擋 | 讀約束定義只證明「約束存在」,INSERT 才證明「它會擋」 |
+| T07 | `test_schema.py::test_audience_check_allows_only_all_for_now` | `all` 可、`group:*` 被擋 | 🔴 上游支援群組定向而**我方做不到**(需 `groups` claim,client 刻意未申請)。**建了欄位卻假裝能用**比不建更糟:發布端會以為設了收件範圍,而實際上每則都送給所有人 |
+| T07 | 🔴 `test_schema.py::test_models_match_migration_schema` | 同一個 PG 上開兩個庫:一邊 migration、一邊 `create_all()`,逐表逐欄比對(表名/欄位名/nullable) | 🔴 **補 T05 誠實標註的盲點**:應用層測試的 schema 來自 `create_all()` 而正式環境來自 migration,**在此之前沒有任何一支測試在比較兩者**;漂移的症狀是「本機全綠、部署後少一個欄位」。⚠ 刻意不比型別字串(等價但不同名的表示會產生假紅燈)|
 | T08 | `test_messages.py::test_cannot_read_other_users_messages` | 讀 `recipient_sub != 自己` → **403** | deny-by-default 的核心;這是本系統最重要的一條 |
 | T08 | `test_messages.py::test_sender_sub_ignores_client_input` | 前端傳 `sender_sub` 一律被忽略,以 token 的 sub 為準 | 寄件人不可偽造(A.3) |
 | T08 | `test_messages.py::test_mark_read_is_idempotent` | 重複標已讀 → 同樣 200,`read_at` 不變 | 輪詢客戶端會重送 |
@@ -169,6 +178,7 @@ front-channel logout(SLO)         test_auth.py(T06:免認證、冪等、只刪 c
 | **auth 層 12 項(T04)** | ✅ **已跑、全綠**(2026-08-21) |
 | **登出層 9 項(T06)** | ✅ **已跑、全綠**(2026-08-24) |
 | **授權層 13 項(T05)** | ✅ **已跑、全綠**(2026-08-24);含 2 支 AST 源碼檢查 |
+| **schema 層 10 項(T07)** | ✅ 已在**真的 PostgreSQL 16.13** 上跑過;含 model↔migration 的 schema 比對 |
 | **migration 層 3 項(T05)** | ✅ 已在**真的 PostgreSQL 16.13** 上跑過。🔴 **PG15 未演練**(本機無 PG15、無 docker daemon)——留 T11 於 VM 補;⚠ 無 PG 時本組 **skip**,`run_all.sh` 會把 skip 數量印出來 |
 | M3–M6 測試 | ⬜ **尚未撰寫**(規格見 §3;不得視為已覆蓋)。⚠ T14 的規格已於 2026-08-18 由 portal 核定,五支測試的斷言已具體化 |
 | T07–T12 / T14–T17 測試 | ⬜ 尚未撰寫(規格見 §3)|
@@ -275,12 +285,31 @@ session 其實還活著,抄到 cookie 值的人仍然是登入狀態。已補兩
    同時獨立通過,兩個角度裡不夠力的那個剛好是它。
 
 
+### 5.6 突變檢查(T07,2026-08-24)
+
+| 故意改壞 | 對應測試 | 結果 |
+|---|---|---|
+| 順手給 `recipient_sub` 補上外鍵 | `test_message_recipient_sub_has_no_fk` | ✅ 紅 |
+| 拿掉未讀鈴鐺的索引 | `test_unread_count_index_exists` | ✅ 紅 |
+| 拿掉公告已讀的唯一約束 | `test_announcement_read_unique_per_person` | ✅ 紅 |
+| 外鍵不設 CASCADE | `test_announcement_read_has_fks_and_cascades` | ✅ 紅 |
+| `category` 的 CHECK 放寬 | `test_category_check_rejects_unknown_value` | ✅ 紅 |
+| `audience` 放寬到群組 | `test_audience_check_allows_only_all_for_now` | ✅ 紅 |
+| `downgrade` 順手刪掉 `app_user` | `test_migration_0002_up_down_up` | ✅ 紅 |
+| `body` 改成 `VARCHAR(255)` | `test_message_schema_matches_upstream` | ✅ 紅 |
+| migration 漏一個欄位(model 有、migration 沒有) | `test_models_match_migration_schema` | ✅ 紅 |
+
+**9 項全被抓到。** 其中最後兩項是 T07 新增的防線:
+「migration 漏一個欄位」在此之前**沒有任何東西會發現**。
+
+
 ---
 
 ## 版本歷史
 
 | 版本 | 日期 | 修改人 | 摘要 |
 |---|---|---|---|
+| v1.6 | 2026-08-24 | Benny | **T07 完工回寫**:新增 9 支 schema 測試規格(`test_schema.py`),逐支寫出「壞掉時沒有症狀」的理由;§5 覆蓋現況加 schema 層 10 項;§5.6 突變檢查 **9/9 全被抓到**。🔴 其中 `test_models_match_migration_schema` **補 T05 誠實標註的盲點**——`create_all()` 與 migration 的 schema 在此之前從來沒有人比對過,而漂移的症狀是「本機全綠、部署後少一個欄位」;`test_message_recipient_sub_has_no_fk` 則是**斷言一個約束不存在**,擋的是「日後有人順手補上外鍵」那個看起來在修缺漏、實際把能力靜默關掉的動作 |
 | v1.5 | 2026-08-24 | Benny | **T05 完工回寫**:T05 規格由 4 支擴為 **13 支 + migration 3 支**(檔案 `test_authz.py` / `test_migration.py`),逐支寫出「壞掉時沒有症狀」的理由;§5 覆蓋現況新增授權層與 migration 層,並**誠實標明 PG15 未演練**(本機只有 PG16.13,無 docker daemon);§5.4 突變檢查 **10/10 全被抓到**;§5.5 記兩個**測試自身**的缺陷——🔴 相對路徑讓同一支測試「從 repo 根綠、經 `run_all.sh` 紅」,以及 `test_downgrade_is_not_a_stub` 把 `op.drop_table` 當成 docstring 濾掉而誤判每個正確的 downgrade |
 | v1.4 | 2026-08-24 | Benny | **T06 完工回寫**:T06 規格由 3 支擴為 7 支(檔案由 `test_auth.py` 改為 `test_logout.py`)。🔴 **§5.2 記一處規格更正**:原寫「帶斜線變體必須 404」,實測 FastAPI 回 **307 且保留 `sid`/`iss`**,重判後認定那個 redirect 在正式環境是**安全網**(登記錯字仍能生效)而非危害,改成「打登記值必須 204」——不依賴 redirect 行為;同時放棄「列舉 `app.routes`」的做法,因為本版 FastAPI 把 include 的結果包成 `_IncludedRouter`,列舉頂層**一個實際端點都拿不到**。🔴 **§5.3 突變檢查 6/6**,其中「先導 IdP 再清」第一次**未被抓到**——原測試只斷言 /me 回 401,而刪 cookie 也會讓它 401,伺服器端 session 其實還活著。已補「session 數減一」與「重放抄走的 cookie 必須 401」 |
 | v1.3 | 2026-08-21 | Benny | **T04 完工回寫**:新增五支測試規格——`test_login_route_issues_pkce_s256`(PKCE 退化成 plain **不會有症狀**)、`test_state_mismatch_is_rejected`(要連「沒建 session」一起斷言)、`test_refresh_failure_logs_user_out`(不然 §3.3 換來的收權即時性是假的)、`test_auth_routes_absent_without_issuer`(回滾閥門)、`test_env_example_oidc_values_match_portal_delivery_shape`(🔴 實際踩到:`.env.example` 與 portal 交付檔的 `INTERNAL_BASE` 形狀不一致,症狀只在第一個真人登入時出現)。並記錄 §5 新增的**突變檢查**結果:9 項突變 8 項被測試抓到 |

@@ -302,7 +302,9 @@ def pg_engine():
     url = os.environ["INBOX_TEST_DB_URL"]
     engine = create_engine(url, future=True)
     with engine.begin() as conn:
-        for tbl in ("user_role", "app_user", "alembic_version"):
+        # 依外鍵相依的反序 drop(T07 的三張表在前)
+        for tbl in ("announcement_read", "announcement", "message",
+                    "user_role", "app_user", "alembic_version"):
             conn.execute(text(f"DROP TABLE IF EXISTS {tbl} CASCADE"))
     yield engine
     engine.dispose()
@@ -316,3 +318,26 @@ def alembic_cfg(pg_engine):
     cfg = Config(str(ROOT / "alembic.ini"))
     cfg.set_main_option("script_location", str(ROOT / "alembic"))
     return cfg
+
+
+@pytest.fixture()
+def models_engine():
+    """另一個空的資料庫,用來跑 `Base.metadata.create_all()`。
+
+    副作用: DROP 掉該庫內的所有本專案表
+    🔴 為什麼要**第二個**資料庫:T07 的 `test_models_match_migration_schema`
+       要比對「migration 建的」與「`create_all()` 建的」兩種 schema,
+       它們不能建在同一個庫裡——後建的會撞到先建的。
+    """
+    import os
+
+    from sqlalchemy import create_engine, text
+
+    url = os.environ["INBOX_TEST_MODELS_DB_URL"]
+    engine = create_engine(url, future=True)
+    with engine.begin() as conn:
+        for tbl in ("announcement_read", "announcement", "message",
+                    "user_role", "app_user", "alembic_version"):
+            conn.execute(text(f"DROP TABLE IF EXISTS {tbl} CASCADE"))
+    yield engine
+    engine.dispose()
