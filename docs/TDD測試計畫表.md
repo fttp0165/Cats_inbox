@@ -1,8 +1,8 @@
 # cats-inbox TDD 測試計畫表
 
 **建立日期:** 2026-08-15 09:40
-**最後更新:** 2026-08-25 12:40
-**版本:** v1.8
+**最後更新:** 2026-08-25 15:05
+**版本:** v1.9
 
 > 依 `docs/開發計畫書.md` §3 的架構逐元件展開:**每個任務動工前該先寫哪一支會失敗的測試**。
 > 憲法第三條:先寫紅測試釘住預期行為,才改程式;「測試全綠」指**實際跑過看到綠燈**。
@@ -47,7 +47,7 @@ cats-inbox-pg(PG15,內部網)       test_skeleton.py(不上 cats-edge、無 port
 Keycloak OIDC(身分)              test_auth.py(T04:RS256/aud/exp/±30s/續期)
 訊息(業務)                        test_inbox.py(T08:deny-by-default/零人名)
 公告(業務)                        test_announcements.py(T09:權限/有效期/逐人已讀)
-輸入驗證與跳脫                      T10 待補(跳脫/action_url 白名單/內容不進 log)
+輸入驗證 / 跳脫 / CSP                test_security.py(T10:14 則反例、nonce、log)
 S2S 推送(系統通知)                test_push.py(T14:無 token/錯 audience → 401)
 front-channel logout(SLO)         test_auth.py(T06:免認證、冪等、只刪 cookie)
 ```
@@ -142,9 +142,21 @@ front-channel logout(SLO)         test_auth.py(T06:免認證、冪等、只刪 c
 | T09 | `test_announcements.py::test_active_response_has_no_author_identity` | 回應無 `author_sub`、無姓名(**先寫入 L1 快取再斷言**)| §4.2a L1;不先寫入的話快取為空時必然通過=**假綠**(T08 踩過)|
 | T09 | 🔴 `test_announcements.py::test_inbox_page_shows_active_announcements` | 收件匣頁顯示有效公告、不顯示過期的 | 沒有這條的話**公告上線後沒有任何畫面顯示它**,而每一層都回 200 |
 | T09 | `test_announcements.py::test_every_timestamp_in_api_responses_carries_a_timezone` | 公告**與訊息**的每個 `*_at` 都帶時區位移 | 我方拒收不帶時區的**輸入**,就不能吐出不帶時區的**輸出**。⚠ 在 SQLite 上 `.isoformat()` 是 naive、PG 上帶時區——**本機與正式行為不同** |
-| T10 | `test_messages.py::test_body_is_escaped_on_output` | 送入 `<script>alert(1)</script>`,輸出必須是跳脫後的字面文字 | 🔴 R1:同源之下一次 stored XSS 可觸及 IdP |
-| T10 | `test_messages.py::test_action_url_whitelist_rejects` | **反例四則**:外部網址、`javascript:`、協定相對 `//evil.tld`、`https://catsapp.sporton.com.tw.evil.tld/` → 一律 **400** | 🔴 R2:站內通知是現成的釣魚載具;第四個反例是前綴比對的經典漏洞 |
-| T10 | `test_messages.py::test_subject_and_body_never_logged` | log 輸出不得含主旨/內容 | A.3:log 只記 id、sub、事件類型 |
+| T10 | `test_security.py::test_message_subject_and_body_are_escaped_on_page` | 送入 `<script>alert(1)</script>`,輸出是跳脫後的字面文字。⚠ **同時斷言跳脫後的字面「有出現」** | 🔴 R1:同源之下一次 stored XSS 可觸及 IdP。只驗「原始標籤不出現」的話,「乾脆不顯示 body」也會通過 |
+| T10 | `test_security.py::test_announcement_title_and_body_are_escaped_on_page` | 公告同樣跳脫 | 公告一則對多人,注入的影響半徑比單封訊息大 |
+| T10 | `test_security.py::test_admin_page_escapes_display_name` | 後台的顯示名稱也跳脫 | 那個值來自 IdP,不是我方產生的 |
+| T10 | 🔴 `test_security.py::test_action_url_rejects_counterexamples` | **反例 14 則**一律 400:外部網址、`http` 降級、`javascript:`(含大小寫變形)、`data:`、`//`、**`/\`**、**`SITE + ".evil.tld"`**、**`SITE + "@evil.tld"`**、無 scheme、NUL、換行、超長 | 🔴 R2:站內通知是現成的釣魚載具。三個經典洞:**`/\` 也是協定相對**(瀏覽器正規化成 `//`)、**前綴冒充**(通過 `startswith` 而網域是別人的)、**userinfo 冒充** |
+| T10 | `test_security.py::test_action_url_accepts_same_site` | 正例 6 則必須通過(含 scheme/host 大小寫變形) | ⚠ 白名單太嚴會讓真的通知發不出去 —— 那是 400(看得見),但仍是 bug |
+| T10 | 🔴 `test_security.py::test_message_is_only_constructed_in_repo_create_message` | **AST 源碼檢查**:`app/` 底下只有 `repo.create_message()` 構造 `Message` | 行為測試只證明「這條路徑現在有驗」;源碼檢查證明「**沒有第二條路徑**」。`action_url` 的端點是 T14 才有的 |
+| T10 | 🔴 `test_security.py::test_bad_action_url_already_in_db_is_not_rendered` | 直接塞一列 `javascript:` 進 DB(繞過應用層)→ 頁面與 API 都不得輸出 | 寫入側白名單是 T10 才加的,**在它之前寫進去的列全都繞過了它** |
+| T10 | `test_security.py::test_good_action_url_still_renders` | 合法的 `action_url` 必須還在 | 沒有這條的話,「永遠回 None」的實作會讓上一條變綠,而按鈕從此不出現 |
+| T10 | `test_security.py::test_subject_and_body_never_appear_in_logs` | 全流程抓 stdout,不得含主旨/內容/公告標題;且斷言**有抓到 log** | A.3:log 只記 id、sub、事件類型。不斷言「有抓到」的話會變成永遠通過的空檢查 |
+| T10 | `test_security.py::test_every_log_line_is_single_line_json` | 每一行都可 `json.loads` 且有 `event` 欄位 | 共通紅線:log 走 stdout、單行 JSON |
+| T10 | 🔴 `test_security.py::test_every_html_response_has_csp` | **列舉所有 GET 路由**,凡回 `text/html` 者一律要有 CSP | 逐路由加標頭的話下一個新頁面會忘記,**而忘記沒有症狀**;列舉式守門讓新頁面自動被涵蓋 |
+| T10 | 🔴 `test_security.py::test_inline_style_carries_the_nonce_from_this_response` | 從**回應標頭**取出 nonce,斷言頁內每個 `<style`/`<script` 帶**那一個**值 | 對不上的症狀是「整頁沒樣式而伺服器零錯誤」。只驗「標頭有 nonce」或「模板有 nonce 屬性」都不夠 |
+| T10 | `test_security.py::test_nonce_differs_between_requests` | 兩次請求的 CSP 不同 | 寫死一個 nonce **等於完全沒有 nonce**,而畫面上一模一樣 |
+| T10 | 🔴 `test_security.py::test_rendered_pages_have_no_inline_style_attributes` | 算繪後的頁面不得有行內樣式屬性 | 🔴 **T10 才發現**:nonce 只對**元素**有效,`style-src 'nonce-…'` 會把 `style="…"` 屬性整批擋掉 —— 「`<style>` 帶了 nonce」**不等於**「樣式會生效」。⚠ 驗算繪後而非模板原始碼(註解裡會提到這個屬性名) |
+| T10 | `test_security.py::test_local_stylesheet_is_still_allowed_and_served` | `style-src` 含 `'self'` 且 Bootstrap 載得到 | 沒有這條的話,「CSP 嚴到把自家 CSS 也擋掉」會讓每支 CSP 測試都綠而整頁沒樣式 |
 
 ### M4–M6(測試待寫)
 
@@ -191,10 +203,11 @@ front-channel logout(SLO)         test_auth.py(T06:免認證、冪等、只刪 c
 | **授權層 13 項(T05)** | ✅ **已跑、全綠**(2026-08-24);含 2 支 AST 源碼檢查 |
 | **收件匣層 14 項(T08)** | ✅ 已跑、全綠(2026-08-25);含靜態資源守門 |
 | **公告層 21 項(T09)** | ✅ 已跑、全綠(2026-08-25);含邊界注入時鐘與「輸出時間必帶時區」|
+| **安全層 41 項(T10)** | ✅ 已跑、全綠(2026-08-25);含 20 個 `action_url` 參數化案例、1 支 AST 源碼檢查、CSP 的路由列舉守門 |
 | **schema 層 10 項(T07)** | ✅ 已在**真的 PostgreSQL 16.13** 上跑過;含 model↔migration 的 schema 比對 |
 | **migration 層 3 項(T05)** | ✅ 已在**真的 PostgreSQL 16.13** 上跑過。🔴 **PG15 未演練**(本機無 PG15、無 docker daemon)——留 T11 於 VM 補;⚠ 無 PG 時本組 **skip**,`run_all.sh` 會把 skip 數量印出來 |
 | M4–M6 測試 | ⬜ **尚未撰寫**(規格見 §3;不得視為已覆蓋)。⚠ T14 的規格已於 2026-08-18 由 portal 核定,五支測試的斷言已具體化 |
-| T09b / T10 / T11 / T12 / T14–T17 測試 | ⬜ 尚未撰寫(規格見 §3)|
+| T09b / T11 / T12 / T14–T17 測試 | ⬜ 尚未撰寫(規格見 §3)|
 | 真 IdP / gateway 冒煙 | ⬜ **尚未執行**(client 已核發,但 secret 尚未進本服務;需 T11 路由。CI 跑不動) |
 | `docker compose config` 解析 | ✅ 已於本機驗過(Compose v5.1.1);**容器實際啟動尚未驗**(本環境無 docker daemon) |
 
@@ -370,12 +383,46 @@ JSON 欄位就是那個面。已補兩條:①API 回應不得出現快取的姓�
 結果不是「已讀狀態錯了」,是**別人一讀,那則公告就從我的清單裡消失**
 —— 而消失的東西沒有人會回報。
 
+
+### 5.9 突變檢查(T10,2026-08-25)
+
+**19 項全被抓到** —— ⚠ **這是修好量測工具之後的數字**(見下)。四項值得記:
+
+| 故意改壞 | 對應測試 | 結果 |
+|---|---|---|
+| 前綴比對不要求下一字元是 `/` | `test_action_url_rejects_counterexamples` | ✅ 紅 |
+| 輸出側直接吐原值(舊資料的 `javascript:` 就出去了) | `test_bad_action_url_already_in_db_is_not_rendered` | ✅ 紅 |
+| 輸出側全部丟掉(守門過頭) | `test_good_action_url_still_renders` | ✅ 紅 |
+| 把行內樣式屬性加回來 | `test_rendered_pages_have_no_inline_style_attributes` | ✅ 紅 |
+
+🔴 **量測工具第三次出問題,而這次的方向相反:它會產生「假 ✅」。**
+
+腳本把 `pytest` 的**非零離開碼**一律讀成「測試紅了 = 抓到」。而 `-k` 選擇器打錯時:
+
+| 情況 | pytest 離開碼 | 腳本原本的判讀 |
+|---|---|---|
+| 測試真的紅了 | 1 | ✅ 抓到 |
+| **全部被 deselect**(`-k` 打錯) | **5** | ✅ 抓到 ← **假的** |
+| **指定不存在的測試** | **4** | ✅ 抓到 ← **假的** |
+
+本次第一輪就有兩個選擇器打錯(`-k protocol_relative`、`-k csp` 都選不到任何測試)。
+
+🔴 **這比前兩次嚴重。** T06 的「sed 沒配到」與 T09 的「sed 改錯語意」都讓結果偏向
+**假 ❌**(保守,會被人追查);這一次偏向**假 ✅**(樂觀,沒有人會追查)。
+
+已修:腳本現在分辨 `rc=0` / `rc=4,5` / 其他三種,並在 4/5 時明講
+「選擇器選不到任何測試」。
+
+⚠ 三次的共同形狀:**量測工具本身沒有測試**。所以每一輪都要看它印的**警示行**,
+不是只看最後那個總數。
+
 ---
 
 ## 版本歷史
 
 | 版本 | 日期 | 修改人 | 摘要 |
 |---|---|---|---|
+| v1.9 | 2026-08-25 | Benny | **T10 完工回寫**:§3 的 T10 由 3 列擴為 **15 列**(原本只寫了跳脫、四則反例、log 三條,而檔名還寫成 `test_messages.py`);反例由 4 則擴為 **14 則**;§5 覆蓋現況加**安全層 41 項**;新增 §5.9 突變檢查 **19/19**。🔴 兩條原規格裡沒有、而壞掉不會有錯誤訊息的:①**輸出側也要擋**(寫入側白名單是 T10 才加的,之前寫進去的列全都繞過了它),②**算繪後不得有行內樣式屬性** —— nonce 只對元素有效,`style-src 'nonce-…'` 會把 `style="…"` 屬性整批擋掉,**「`<style>` 帶了 nonce」不等於「樣式會生效」**。🔴 §5.9 記下量測工具第三次出問題,且這次會產生**假 ✅**:`-k` 打錯時 pytest 回 rc=5/4 也是非零,而腳本把非零一律讀成「抓到」 |
 | v1.8 | 2026-08-25 | Benny | **T09 完工回寫**:§3 的 T09 由 2 列擴為 **11 列**(原本只寫了「非 announcer 403」與「過期不出現」兩條,而檔名還寫成 `test_messages.py`);§5 覆蓋現況加**公告層 21 項**;新增 §5.8 突變檢查 **17/17**。🔴 兩條在原規格裡不存在、而壞掉不會有錯誤訊息的:①**未來的公告也不得出現**(只驗 `ends_at` 是最容易漏的一半),②**甲讀過不得讓乙變已讀**——而該項的突變結果更值得記:把 `user_sub` 從 JOIN 的 ON 搬到 WHERE,症狀不是「已讀錯了」而是**別人一讀那則公告就從我的清單裡消失**,而消失的東西沒有人會回報。⚠ 第一輪有 1 項顯示未抓到,查為 **sed 沒真的改到語意**(加了恆真項而條件還在)——與 T06 的「拿掉 no-store」同一種誤判;腳本已加「突變沒套用就明講」的偵測 |
 | v1.7 | 2026-08-25 | Benny | **T08 完工回寫**:§5 覆蓋現況加收件匣層 14 項;§5.7 突變檢查 **9/9**。🔴 記一個**測試的洞**:「零人名」原本只驗 HTML 頁面,而往 API 回應加姓名欄位**測試照樣綠**(模板沒算繪它,但前端 JS 拿得到,而 §4.2a L1 禁的是「一般使用者可見的面」)——已補「API 回應不得含姓名類欄位」的結構性斷言。⚠ 另記**量測工具**的第二次問題:突變腳本的還原不是原子的,同一秒內完成時 Python 會沿用由突變後原始碼編出的 `.pyc`,使突變留在工作目錄而 `git status` 看不出來;已加 `__pycache__` 清除,並作為「突變腳本不進 repo」的第二個理由 |
 | v1.6 | 2026-08-24 | Benny | **T07 完工回寫**:新增 9 支 schema 測試規格(`test_schema.py`),逐支寫出「壞掉時沒有症狀」的理由;§5 覆蓋現況加 schema 層 10 項;§5.6 突變檢查 **9/9 全被抓到**。🔴 其中 `test_models_match_migration_schema` **補 T05 誠實標註的盲點**——`create_all()` 與 migration 的 schema 在此之前從來沒有人比對過,而漂移的症狀是「本機全綠、部署後少一個欄位」;`test_message_recipient_sub_has_no_fk` 則是**斷言一個約束不存在**,擋的是「日後有人順手補上外鍵」那個看起來在修缺漏、實際把能力靜默關掉的動作 |

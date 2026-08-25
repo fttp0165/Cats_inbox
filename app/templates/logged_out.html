@@ -3,7 +3,8 @@
       按下登出後唯一會看到的東西——它如果連不出字型就整頁白,體感是
       「登出把系統弄壞了」。
    🔴 light 主題寫死,不做 prefers-color-scheme 深色切換(憲法第四條 1/2)。
-   ⚠ T10 會加嚴格 CSP + nonce,屆時 <style> 要補 nonce="{{ csp_nonce }}"。
+   🔴 嚴格 CSP(T10 已落地):<style> 帶逐請求 nonce;style="…" 屬性一律不可用
+      (nonce 對屬性無效,屬性會被擋掉而症狀是版面走鐘且伺服器零錯誤)。
       現在不先加是因為那個變數還不存在,加了會算繪出字面上的 nonce="" #}
 <!doctype html>
 <html lang="zh-Hant">
@@ -11,7 +12,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>已登出 — 站內信</title>
-  <style>
+  <style nonce="{{ request.state.csp_nonce }}">
     :root { color-scheme: light; }
     body {
       margin: 0; min-height: 100vh;

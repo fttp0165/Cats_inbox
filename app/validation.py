@@ -129,3 +129,75 @@ def iso_utc(value: datetime | None) -> str | None:
     if value.tzinfo is None:
         return value.replace(tzinfo=timezone.utc).isoformat()
     return value.astimezone(timezone.utc).isoformat()
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# T10:`action_url` 同站白名單
+# ═══════════════════════════════════════════════════════════════════════
+
+# 🔴 **寫死,不從設定讀。** 兩個理由:
+#    ① 平台在 D2″ 之下**只有一個 hostname**(MIS 只核可一個),
+#       所以這裡沒有東西需要「設定」——多一個設定項只多一個可以被改錯的地方;
+#    ② 設定檔**可以被改寬,而改寬不會有任何症狀**(釣魚連結長得跟正常連結一樣)。
+#       與 `app/authz.py` 的 `ROLE_CAPABILITIES` 是同一個理由。
+#    要改站台就改這一行,而它有測試守著。
+SITE_ORIGIN = "https://catsapp.sporton.com.tw"
+ACTION_URL_MAX = 512   # 對應 `Message.action_url` 的欄寬
+
+
+def validate_action_url(value: str | None, *, field: str = "action_url") -> str | None:
+    """驗 `action_url` 是**同站**值,否則 400 拒收。
+
+    參數: value — 待驗的值(None / 空白 = 沒有,合法)
+    回傳: 通過的原值(去過頭尾空白),或 None
+    錯誤: 不合白名單 → BadRequest(400)
+    副作用: 無
+
+    **接受兩種形狀,其餘一律拒收:**
+      1. `/` 開頭的相對路徑(但第二個字元是 `/` 或 `\\` 的除外,見下);
+      2. `https://catsapp.sporton.com.tw` 之後**緊接 `/` 或字串結束**。
+
+    🔴 **站內通知是現成的釣魚載具** —— 它天生長得「可信」(來自公司系統、
+       在公司的網域裡、旁邊是一顆「前往處理」按鈕)。
+
+    🔴 **三個看起來會過的洞,逐一擋掉:**
+
+    | 反例 | 為什麼會過 | 怎麼擋 |
+    |---|---|---|
+    | `//evil.tld/x` | 是 `/` 開頭 | 第二個字元是 `/` 就拒 |
+    | `/\\evil.tld/x` | 是 `/` 開頭,而**瀏覽器把 `/\\` 正規化成 `//`** | 第二個字元是 `\\` 也拒 |
+    | `https://catsapp.sporton.com.tw.evil.tld/` | 通過 `startswith(站台)` **而網域是別人的** | 前綴之後必須是 `/` 或結束 |
+
+    同一道「前綴之後必須是 `/` 或結束」也擋掉 `...com.tw@evil.tld/`(userinfo 冒充)。
+
+    ⚠ scheme 與 host **大小寫不敏感**(URL 規範),所以比對前綴時轉小寫
+      —— 但**只轉前綴那一段**:整條轉小寫會把路徑也改掉,而路徑是大小寫敏感的。
+
+    ⚠ 控制字元一律拒收:**瀏覽器會把 URL 裡的換行/定位字元剝掉**,
+      所以 `java\\nscript:` 這種寫法在別的比對方式下會變成可執行的協定。
+    """
+    if value is None:
+        return None
+    url = value.strip()
+    if not url:
+        return None
+    if len(url) > ACTION_URL_MAX:
+        raise BadRequest("action_url_too_long", f"{field} 超過 {ACTION_URL_MAX} 字")
+    if any(ord(ch) < 0x20 or ord(ch) == 0x7F for ch in url):
+        raise BadRequest("action_url_control_char", f"{field} 含控制字元")
+
+    if url.startswith("/"):
+        if url[1:2] in ("/", "\\"):
+            # 協定相對:`//evil.tld` 與(經瀏覽器正規化後的)`/\evil.tld`
+            raise BadRequest("action_url_protocol_relative", f"{field} 不得為協定相對網址")
+        return url
+
+    if url[: len(SITE_ORIGIN)].lower() == SITE_ORIGIN:
+        rest = url[len(SITE_ORIGIN):]
+        if rest == "" or rest.startswith("/"):
+            return url
+
+    raise BadRequest(
+        "action_url_not_same_site",
+        f"{field} 只接受 / 開頭的相對路徑或 {SITE_ORIGIN}/ 前綴",
+    )

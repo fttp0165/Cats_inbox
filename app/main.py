@@ -104,6 +104,53 @@ def create_app(*, transport=None, clock=None) -> FastAPI:
 
     app.include_router(router)
 
+    # ── 安全標頭 + 逐請求 CSP nonce(T10,契約 §4.10「嚴格 CSP」)──────
+    @app.middleware("http")
+    async def _security_headers(request, call_next):
+        """對**每一個**回應加上安全標頭,並發一個**這一次專用**的 CSP nonce。
+
+        副作用: 在 `request.state.csp_nonce` 留下 nonce 供模板取用
+
+        🔴 **為什麼是 middleware,不是逐路由加標頭:**
+           逐路由加的話,下一個新頁面會忘記,而**忘記不會有任何症狀**
+           ——頁面照樣顯示,只是沒有 CSP 保護。
+           守門是 `tests/test_security.py::test_every_html_response_has_csp`,
+           它**列舉所有回 HTML 的路由**,所以新頁面自動被涵蓋。
+
+        🔴 **nonce 每個請求都不同。** 寫死一個等於完全沒有 nonce
+           (攻擊者注入一次就永久有效),而寫死的版本在畫面上與正確的版本
+           **一模一樣**。
+
+        🔴 **沒有 `script-src` 這一項是刻意的** —— 它會落回
+           `default-src 'none'`,也就是**本服務不執行任何 JavaScript**。
+           全站是伺服器端算繪,現在一支腳本都沒有。
+           ⚠ 日後要加腳本,必須同時在此加 `script-src 'nonce-...'`
+           並在那個 `<script>` 上帶 nonce;不加的話腳本會被靜默擋掉。
+
+        ⚠ `frame-ancestors 'none'` 表示**不可被嵌入 iframe**。現行設計是
+           入口頁「連結」到本服務而非嵌入(T12 只加鈴鐺);若日後改為嵌入,
+           這裡必須改成允許入口來源,否則 iframe 會是一片空白**而零錯誤訊息**。
+        """
+        import secrets
+
+        nonce = secrets.token_urlsafe(16)
+        request.state.csp_nonce = nonce
+        response = await call_next(request)
+        response.headers["Content-Security-Policy"] = (
+            "default-src 'none'; "
+            f"style-src 'self' 'nonce-{nonce}'; "
+            "img-src 'self' data:; "
+            "font-src 'self'; "
+            "connect-src 'self'; "
+            "form-action 'self'; "
+            "frame-ancestors 'none'; "
+            "base-uri 'none'"
+        )
+        # 這兩個不屬於 CSP,但缺了同樣沒有症狀
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["Referrer-Policy"] = "same-origin"
+        return response
+
     # ── 靜態資源(T08)────────────────────────────────────────────────
     # 🔴 掛載點是 `{base_path}/assets`,對應目錄 `app/static/assets`。
     #    portal 2026-08-03 踩過:檔案放在 mount 目錄**之外**時,

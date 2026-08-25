@@ -7,7 +7,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>角色後台 — 站內信</title>
-  <style>
+  <style nonce="{{ request.state.csp_nonce }}">
     :root { color-scheme: light; }
     body { margin:0; padding:2rem; background:#f6f7f9; color:#1f2328;
            font-family: system-ui, -apple-system, "Segoe UI", "Noto Sans TC", sans-serif; }
@@ -60,7 +60,7 @@
     </tr>
     {% endfor %}
   </table>
-  <form method="post" action="{{ base_path }}/admin/users/purge-display-names" style="margin-top:1.5rem">
+  <form class="mt-4" method="post" action="{{ base_path }}/admin/users/purge-display-names">
     <input type="text" name="sub" placeholder="sub(留空=整批)" size="40">
     <button type="submit">清除顯示名稱快取</button>
   </form>

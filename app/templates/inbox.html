@@ -12,12 +12,15 @@
       症狀是「整頁沒有樣式」且伺服器零錯誤。守門在 `tests/test_static.py`。
 
    🔴 light 主題寫死,不做 `prefers-color-scheme` 深色切換(憲法第四條 1/2)。
-   ⚠ T10 會加嚴格 CSP + nonce,屆時 `<style>` 要補 `nonce="{{ csp_nonce }}"`。
-      現在不先加是因為那個變數還不存在,加了會算繪出字面上的 nonce=""。
+   🔴 **嚴格 CSP(T10 已落地)**:`<style>` 帶逐請求 nonce
+      (`request.state.csp_nonce`,由 `app/main.py` 的 middleware 發)。
+      ⚠ **`style="…"` 屬性一律不可用** —— nonce 只對**元素**有效,對屬性無效,
+      所以屬性會被 CSP 擋掉,而症狀是**版面走鐘且伺服器零錯誤**。
+      要加樣式就加 class 到上面那個 `<style>` 區塊裡。
 
    ⚠ **`body` 一律用 Jinja2 的預設跳脫輸出**(`{{ }}`,不用 `|safe`)。
       body 在資料庫裡是純文字(本專案紅線),而 stored XSS 是本系統第一風險
-      ——同源之下一次 XSS 可觸及 IdP。T10 會為此加反例測試。 #}
+      ——同源之下一次 XSS 可觸及 IdP。反例測試在 tests/test_security.py(T10)。 #}
 <!doctype html>
 <html lang="zh-Hant">
 <head>
@@ -25,7 +28,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>收件匣 — 站內信</title>
   <link rel="stylesheet" href="/inbox/assets/vendor/bootstrap.min.css">
-  <style>
+  <style nonce="{{ request.state.csp_nonce }}">
     :root { color-scheme: light; }
     body { background: #f6f7f9; }
     .msg-unread { border-left: 4px solid #1f6feb; }
@@ -33,11 +36,17 @@
     .ann-unread { border-left: 4px solid #bf8700; }
     .ann-read { border-left: 4px solid #e6d9b8; }
     .src-tag { font-size: .75rem; letter-spacing: .02em; }
+    /* 🔴 T10:嚴格 CSP 之下行內樣式屬性一律被擋(nonce 對屬性無效),
+       所以原本寫在標籤上的 max-width 與 font-size 都搬進來變成 class。
+       症狀若沒處理:版面走鐘而**伺服器零錯誤**。守門在
+       tests/test_security.py::test_templates_have_no_inline_style_attributes */
+    .page-narrow { max-width: 52rem; }
+    .fs-tiny { font-size: .75rem; }
     .msg-body { white-space: pre-wrap; word-break: break-word; }
   </style>
 </head>
 <body class="text-body">
-  <main class="container py-4" style="max-width: 52rem;">
+  <main class="container py-4 page-narrow">
 
     <header class="d-flex align-items-center justify-content-between mb-4">
       <h1 class="h4 mb-0">
@@ -77,7 +86,7 @@
                 </div>
                 <h3 class="h6 mb-1">{{ a.title }}</h3>
                 <p class="msg-body mb-2 text-secondary small">{{ a.body }}</p>
-                <div class="text-secondary" style="font-size: .75rem;">
+                <div class="text-secondary fs-tiny">
                   {{ a.starts_at }}
                   {% if a.ends_at %} — {{ a.ends_at }}{% else %} — 長期{% endif %}
                 </div>
@@ -112,13 +121,14 @@
                   </div>
                   <h2 class="h6 mb-1">{{ m.subject }}</h2>
                   <p class="msg-body mb-2 text-secondary small">{{ m.body }}</p>
-                  <div class="text-secondary" style="font-size: .75rem;">
+                  <div class="text-secondary fs-tiny">
                     {{ m.created_at }}
                   </div>
                 </div>
               </div>
               {% if m.action_url %}
-                {# action_url 只可能是同站值(寫入時已驗,T10);此處不再組字串 #}
+                {# action_url 已在**寫入側與輸出側各驗一次**同站白名單(T10);
+                   此處不組字串、不用 |safe #}
                 <a class="btn btn-sm btn-primary mt-2" href="{{ m.action_url }}">前往處理</a>
               {% endif %}
             </div>
@@ -127,7 +137,7 @@
       </ul>
     {% endif %}
 
-    <footer class="mt-4 text-secondary" style="font-size: .75rem;">
+    <footer class="mt-4 text-secondary fs-tiny">
       {# 顯示本人的 sub 而非姓名:與待開通頁一致(契約 §4.3),
          且這一頁不顯示任何人名(§4.2a L1、DI-3 未裁決)。 #}
       登入身分:<code>{{ sub }}</code>

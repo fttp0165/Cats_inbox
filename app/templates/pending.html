@@ -1,13 +1,13 @@
 {# 待開通頁(T05)。契約 §4.3 的雞生蛋解法:顯示本人 sub 供自助取得。
    🔴 零外部資源、light 寫死(§4.10 禁外部 CDN、憲法第四條 1/2)。
-   ⚠ T10 加嚴格 CSP 時 <style> 要補 nonce。#}
+   🔴 嚴格 CSP(T10 已落地):<style> 帶逐請求 nonce;style="…" 屬性一律不可用。#}
 <!doctype html>
 <html lang="zh-Hant">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>待開通 — 站內信</title>
-  <style>
+  <style nonce="{{ request.state.csp_nonce }}">
     :root { color-scheme: light; }
     body { margin:0; min-height:100vh; display:flex; align-items:center; justify-content:center;
            background:#f6f7f9; color:#1f2328;

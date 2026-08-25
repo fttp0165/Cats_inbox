@@ -21,6 +21,8 @@ from sqlalchemy.orm import Session
 from app.authz import ALL_ROLES, ROLE_ADMIN, ROLE_READER
 from app.models import (
     AUDIENCE_ALL,
+    CATEGORIES,
+    CATEGORY_SYSTEM,
     Announcement,
     AnnouncementRead,
     AppUser,
@@ -356,6 +358,69 @@ def mark_announcement_read(
         return existing
     row = AnnouncementRead(
         announcement_id=announcement_id, user_sub=user_sub, read_at=_utcnow()
+    )
+    session.add(row)
+    session.flush()
+    return row
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# T10:訊息的**唯一寫入路徑**
+#
+# 🔴 為什麼關卡設在這裡,而不是設在端點上:
+#    `action_url` 的唯一寫入端點是**推送 API(T14)**,而它還不存在。
+#    設在端點上等於在一個還不存在的地方設關卡 —— 而 T14 動工時,
+#    授權與驗證是那次的**附帶工作**,附帶工作是最容易被忘記的那一種。
+#    設在寫入路徑上,T14 就**只能穿過它**。
+#
+# 🔴 以源碼層 AST 檢查釘住「`app/` 底下只有這裡構造 `Message`」
+#    (`tests/test_security.py::test_message_is_only_constructed_in_repo_create_message`)。
+#    行為測試只能證明「這條路徑現在有驗」;源碼檢查證明「沒有第二條路徑」。
+# ═══════════════════════════════════════════════════════════════════════
+
+
+def create_message(
+    session: Session,
+    *,
+    recipient_sub: str,
+    subject: str,
+    body: str,
+    action_url: str | None = None,
+    source_app: str | None = None,
+    sender_sub: str | None = None,
+    category: str = CATEGORY_SYSTEM,
+    thread_id=None,
+) -> Message:
+    """建立一則訊息 / 系統通知(**逐人一列**)。
+
+    參數:
+      recipient_sub — 收件人的 `sub`(**不設外鍵**,見 `app/models.py` 的說明)
+      sender_sub    — None = 系統發出;人對人時**一律自 token 取**,不取自 request
+      source_app    — **一律由 service client 身分推導**,不得取自 request body
+      action_url    — 同站值,否則 400(本專案紅線)
+    回傳: Message
+    副作用: INSERT 一列 `message`
+    錯誤: 值不合法 → BadRequest(400),且**不寫入任何東西**
+
+    🔴 驗證全部在 `session.add` **之前**。順序反過來(先加再驗)的話,
+       400 的回應旁邊已經留下一列,而下一個查詢就會把它端出來。
+    """
+    from app.validation import require_choice, require_text, validate_action_url
+
+    safe_subject = require_text(subject, field="subject", max_length=255)
+    safe_body = require_text(body, field="body", max_length=20000)
+    safe_category = require_choice(category, field="category", allowed=CATEGORIES)
+    safe_action_url = validate_action_url(action_url)
+
+    row = Message(
+        recipient_sub=recipient_sub,
+        sender_sub=sender_sub,
+        category=safe_category,
+        subject=safe_subject,
+        body=safe_body,
+        action_url=safe_action_url,
+        source_app=source_app,
+        thread_id=thread_id,
     )
     session.add(row)
     session.flush()

@@ -39,6 +39,29 @@ from app.routes_announcements import serialize_announcement
 from app.validation import iso_utc
 
 
+def _safe_action_url(msg) -> str | None:
+    """輸出側的 `action_url` 白名單(T10)。不合白名單就丟掉,並記一行 log。
+
+    參數: msg — Message
+    回傳: 合法的 action_url,或 None
+    副作用: 丟掉時寫一行 log(**只記 id 與事件類型**,不記主旨/內容)
+
+    🔴 **為什麼寫入側已經驗過還要再驗一次:**
+       寫入側的白名單是 T10 才加的。在它之前寫進去的列、日後手動改過的列、
+       被入侵寫進去的列**都繞過了它** —— 輸出側是唯一能保護**既有資料**的地方。
+       站內通知天生長得「可信」,而 `javascript:` 連結在畫面上與正常連結
+       **一模一樣**。
+    ⚠ 丟掉時一定要留 log:靜默丟掉會讓「那顆按鈕不見了」查不出原因。
+    """
+    from app.validation import BadRequest, validate_action_url
+
+    try:
+        return validate_action_url(msg.action_url)
+    except BadRequest as exc:
+        log_event("action_url_rejected_on_output", message_id=str(msg.id), reason=exc.code)
+        return None
+
+
 def _serialize(msg) -> dict:
     """把 Message 轉成回應用的 dict。
 
@@ -57,7 +80,11 @@ def _serialize(msg) -> dict:
         "category": msg.category,
         "subject": msg.subject,
         "body": msg.body,
-        "action_url": msg.action_url,
+        # 🔴 **輸出側再驗一次**(T10)。寫入側的白名單是 T10 才加的,而在它之前
+        #    寫進去的列、手動改過的列、被入侵寫進去的列都繞過了它 ——
+        #    輸出側再擋一次是唯一能保護**既有資料**的做法。
+        #    ⚠ 丟掉時記一行 log(只記 id):靜默丟掉會讓「按鈕不見了」查不出原因。
+        "action_url": _safe_action_url(msg),
         "source_app": msg.source_app,
         "is_read": msg.is_read,
         # 🔴 T09 起改走 `iso_utc`:原本的 `.isoformat()` 在 **SQLite** 上
