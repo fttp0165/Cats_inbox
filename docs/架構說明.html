@@ -1,0 +1,475 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>cats-inbox 架構說明(商業邏輯 · 技術架構 · 介面概念)</title>
+<style>
+:root { color-scheme: light; }
+body { background:#ffffff; color:#1f2328; margin:0 auto; padding:2rem 1.2rem 4rem;
+       max-width:60rem; line-height:1.65;
+       font-family:-apple-system,"Segoe UI","Noto Sans TC","Microsoft JhengHei",
+                   "PingFang TC",sans-serif; }
+h1 { font-size:1.7rem; border-bottom:2px solid #d0d7de; padding-bottom:.4rem; }
+h2 { font-size:1.35rem; border-bottom:1px solid #d8dee4; padding-bottom:.3rem; margin-top:2.2rem; }
+h3 { font-size:1.12rem; margin-top:1.8rem; }
+h4 { font-size:1rem; margin-top:1.4rem; }
+p, li { overflow-wrap:break-word; }
+a { color:#0b57d0; }
+code { background:#f6f8fa; border:1px solid #e4e8ec; border-radius:4px;
+       padding:.08em .35em; font-size:.92em;
+       font-family:ui-monospace,SFMono-Regular,Consolas,"Noto Sans Mono CJK TC",monospace; }
+pre { background:#f6f8fa; border:1px solid #e4e8ec; border-radius:6px;
+      padding: .8rem 1rem; overflow-x:auto; line-height:1.5; }
+pre code { background:none; border:none; padding:0; }
+blockquote { margin:1rem 0; padding:.5rem 1rem; border-left:4px solid #c9d1d9;
+             background:#f8f9fb; color:#4b535d; }
+blockquote p { margin:.35rem 0; }
+.tablewrap { overflow-x:auto; margin:1rem 0; }
+table { border-collapse:collapse; font-size:.95em; min-width:50%; }
+th, td { border:1px solid #d0d7de; padding:.4rem .65rem; text-align:left; vertical-align:top; }
+th { background:#f6f8fa; }
+tr:nth-child(even) td { background:#fbfcfd; }
+hr { border:none; border-top:1px solid #d0d7de; margin:2rem 0; }
+figure.svg { margin:1.2rem 0; text-align:center; }
+figure.svg svg { max-width:100%; height:auto; }
+</style>
+</head>
+<body>
+<h1>cats-inbox 架構說明(商業邏輯 · 技術架構 · 介面概念)</h1>
+<p><strong>建立日期:</strong> 2026-08-25 11:26<br><strong>最後更新:</strong> 2026-08-25 11:26<br><strong>版本:</strong> v1.0<br><strong>適用範圍:</strong> cats-inbox(Sporton 統一入口平台的站內信 / 通知中心)<br><strong>讀者:</strong> 想知道「這個系統在做什麼、為什麼這樣做、使用者會看到什麼」的人</p>
+<blockquote><p><strong>本文與其他文件的分工</strong>(避免兩個真相):</p>
+<div class="tablewrap"><table><thead><tr><th>想知道</th><th>看哪一份</th></tr></thead><tbody><tr><td><strong>這個系統是什麼、為什麼這樣設計</strong></td><td><strong>本文</strong></td></tr><tr><td>功能意圖(what / why)的上游</td><td>cats-portal《站內信通知中心設計規劃》v1.6</td></tr><tr><td>什麼時候做、誰做、做到哪</td><td><code>docs/開發計畫書.md</code> → <code>docs/任務表.md</code></td></tr><tr><td>每個任務怎麼證明做到了</td><td><code>docs/TDD測試計畫表.md</code></td></tr><tr><td>每次改動的實際經過與踩到的坑</td><td><code>docs/dev-logs/</code></td></tr></tbody></table></div>
+<p>本文<strong>不複製</strong>上位契約的條文,只引用(見〈附錄:引用的上位規約〉)。</p></blockquote>
+<hr>
+<h2>1. 一句話</h2>
+<p><strong>把散在各系統的通知收到一個地方,讓人在統一入口看得到未讀。</strong></p>
+<p>不做即時聊天,不做推播,不做附件。刻意極簡:<strong>無 Redis、無訊息佇列、無 WebSocket</strong><br>——未讀鈴鐺用 30 秒輪詢。</p>
+<hr>
+<h2>2. 商業邏輯:一則通知的一生</h2>
+<figure class="svg"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 980 700" font-family="-apple-system,'Segoe UI','Noto Sans TC','Microsoft JhengHei',sans-serif" font-size="13">
+  <!-- cats-inbox 商業邏輯(light 主題、無外部依賴;憲法第四條5)
+       畫的是「一則通知的一生」與「角色→能力」的閘門。
+       🔴 未開通/未實作的部分一律以虛線 + 灰字標示,不得畫成已經有的樣子。 -->
+  <rect width="980" height="700" fill="#ffffff"/>
+  <text x="490" y="26" text-anchor="middle" font-size="16" font-weight="bold" fill="#1f2328">cats-inbox 商業邏輯:一則通知的一生</text>
+  <text x="490" y="45" text-anchor="middle" font-size="11" fill="#57606a">實線=已實作(T00–T08) · 虛線灰字=尚未開通</text>
+
+  <!-- ══════ 第一欄:誰產生訊息 ══════ -->
+  <text x="30" y="78" font-size="12" font-weight="bold" fill="#1f6feb">① 誰產生</text>
+
+  <!-- 系統通知(M5,未開通) -->
+  <rect x="24" y="90" width="200" height="96" rx="6" fill="#fafbfc" stroke="#afb8c1" stroke-width="1.5" stroke-dasharray="5 3"/>
+  <text x="124" y="110" text-anchor="middle" font-size="12" font-weight="bold" fill="#57606a">各業務系統</text>
+  <text x="124" y="130" text-anchor="middle" font-size="11" fill="#57606a">compliance / PLM /</text>
+  <text x="124" y="147" text-anchor="middle" font-size="11" fill="#57606a">sporton_core / upload</text>
+  <text x="124" y="168" text-anchor="middle" font-size="10.5" fill="#8b949e">⏳ M5 推送 API 尚未開通</text>
+
+  <!-- 管理員發公告 -->
+  <rect x="24" y="204" width="200" height="80" rx="6" fill="#eef4fb" stroke="#4a6785" stroke-width="1.5"/>
+  <text x="124" y="226" text-anchor="middle" font-size="12" font-weight="bold" fill="#1f2328">管理員</text>
+  <text x="124" y="246" text-anchor="middle" font-size="11" fill="#24292f">發布公告(全站)</text>
+  <text x="124" y="266" text-anchor="middle" font-size="10.5" fill="#57606a">需 announcer 角色</text>
+
+  <!-- 人對人(階段二) -->
+  <rect x="24" y="302" width="200" height="80" rx="6" fill="#fafbfc" stroke="#afb8c1" stroke-width="1.5" stroke-dasharray="5 3"/>
+  <text x="124" y="324" text-anchor="middle" font-size="12" font-weight="bold" fill="#57606a">同事(人對人)</text>
+  <text x="124" y="344" text-anchor="middle" font-size="11" fill="#57606a">互寄站內信</text>
+  <text x="124" y="364" text-anchor="middle" font-size="10.5" fill="#8b949e">⏳ 階段二(M6)</text>
+
+  <!-- ══════ 第二欄:進來的門 ══════ -->
+  <text x="268" y="78" font-size="12" font-weight="bold" fill="#1f6feb">② 進來的門</text>
+
+  <rect x="262" y="90" width="176" height="96" rx="6" fill="#fff8f0" stroke="#bf8700" stroke-width="1.5" stroke-dasharray="5 3"/>
+  <text x="350" y="112" text-anchor="middle" font-size="11.5" font-weight="bold" fill="#57606a">S2S 推送 API</text>
+  <text x="350" y="131" text-anchor="middle" font-size="10.5" fill="#57606a">client_credentials</text>
+  <text x="350" y="148" text-anchor="middle" font-size="10.5" fill="#57606a">scope notification:push</text>
+  <text x="350" y="165" text-anchor="middle" font-size="10.5" fill="#57606a">X-User-Id + Idempotency-Key</text>
+  <text x="350" y="180" text-anchor="middle" font-size="10" fill="#8b949e">source_app 由呼叫方身分推導</text>
+
+  <rect x="262" y="204" width="176" height="80" rx="6" fill="#eef4fb" stroke="#4a6785" stroke-width="1.5"/>
+  <text x="350" y="228" text-anchor="middle" font-size="11.5" font-weight="bold" fill="#1f2328">公告發布 API</text>
+  <text x="350" y="248" text-anchor="middle" font-size="10.5" fill="#24292f">使用者 JWT + 角色判定</text>
+  <text x="350" y="268" text-anchor="middle" font-size="10.5" fill="#57606a">有效期 starts / ends</text>
+
+  <rect x="262" y="302" width="176" height="80" rx="6" fill="#fafbfc" stroke="#afb8c1" stroke-width="1.5" stroke-dasharray="5 3"/>
+  <text x="350" y="330" text-anchor="middle" font-size="11.5" font-weight="bold" fill="#57606a">寄信 API</text>
+  <text x="350" y="350" text-anchor="middle" font-size="10.5" fill="#57606a">sender_sub 自 token 取</text>
+  <text x="350" y="368" text-anchor="middle" font-size="10" fill="#8b949e">⏳ 授權外殼已在,功能未做</text>
+
+  <!-- 箭頭:第一欄 → 第二欄 -->
+  <path d="M224 138 H258" stroke="#afb8c1" stroke-width="1.5" stroke-dasharray="4 3" marker-end="url(#ag)"/>
+  <path d="M224 244 H258" stroke="#4a6785" stroke-width="1.8" marker-end="url(#ab)"/>
+  <path d="M224 342 H258" stroke="#afb8c1" stroke-width="1.5" stroke-dasharray="4 3" marker-end="url(#ag)"/>
+
+  <!-- ══════ 第三欄:存成什麼 ══════ -->
+  <text x="482" y="78" font-size="12" font-weight="bold" fill="#1f6feb">③ 存成什麼(兩種形狀)</text>
+
+  <rect x="476" y="90" width="212" height="130" rx="6" fill="#f0f7ee" stroke="#3f8f45" stroke-width="1.8"/>
+  <text x="582" y="112" text-anchor="middle" font-size="12" font-weight="bold" fill="#1f2328">message —— 逐人一列</text>
+  <text x="486" y="134" font-size="10.5" fill="#24292f">recipient_sub(收件人)</text>
+  <text x="486" y="152" font-size="10.5" fill="#24292f">subject / body(純文字)</text>
+  <text x="486" y="170" font-size="10.5" fill="#24292f">source_app(取代人名)</text>
+  <text x="486" y="188" font-size="10.5" fill="#24292f">is_read / read_at ← 已讀在這一列上</text>
+  <text x="486" y="208" font-size="10" fill="#57606a">🔴 recipient_sub 不設外鍵:可推給尚未登入過的人</text>
+
+  <rect x="476" y="238" width="212" height="146" rx="6" fill="#f0f7ee" stroke="#3f8f45" stroke-width="1.8"/>
+  <text x="582" y="260" text-anchor="middle" font-size="12" font-weight="bold" fill="#1f2328">announcement —— 一則對多人</text>
+  <text x="486" y="282" font-size="10.5" fill="#24292f">title / body / audience</text>
+  <text x="486" y="300" font-size="10.5" fill="#24292f">starts_at / ends_at(有效期)</text>
+  <text x="486" y="322" font-size="10.5" font-weight="bold" fill="#24292f">announcement_read —— 已讀逐人一列</text>
+  <text x="486" y="340" font-size="10.5" fill="#24292f">(announcement_id, user_sub) 唯一</text>
+  <text x="486" y="360" font-size="10" fill="#57606a">公告不逐人複製列 —— 一萬人只有一列公告</text>
+  <text x="486" y="376" font-size="10" fill="#bf8700">⚠ audience 目前只接受 all(群組定向做不到)</text>
+
+  <path d="M438 138 H472" stroke="#afb8c1" stroke-width="1.5" stroke-dasharray="4 3" marker-end="url(#ag)"/>
+  <path d="M438 244 H472" stroke="#4a6785" stroke-width="1.8" marker-end="url(#ab)"/>
+  <path d="M438 342 H472" stroke="#afb8c1" stroke-width="1.5" stroke-dasharray="4 3" marker-end="url(#ag)"/>
+
+  <!-- ══════ 第四欄:誰看得到 ══════ -->
+  <text x="734" y="78" font-size="12" font-weight="bold" fill="#1f6feb">④ 誰看得到</text>
+
+  <rect x="728" y="90" width="224" height="120" rx="6" fill="#eef4fb" stroke="#4a6785" stroke-width="1.8"/>
+  <text x="840" y="112" text-anchor="middle" font-size="12" font-weight="bold" fill="#1f2328">收件匣頁 /inbox/</text>
+  <text x="738" y="134" font-size="10.5" fill="#24292f">只列出 recipient_sub == 自己</text>
+  <text x="738" y="152" font-size="10.5" fill="#24292f">點開即標已讀(冪等)</text>
+  <text x="738" y="172" font-size="10.5" fill="#24292f">寄件人顯示為 source_app 標籤</text>
+  <text x="738" y="192" font-size="10" fill="#cf222e">🔴 階段一零人名(§4.2a L1;DI-3 未裁決)</text>
+
+  <rect x="728" y="228" width="224" height="96" rx="6" fill="#eef4fb" stroke="#4a6785" stroke-width="1.8"/>
+  <text x="840" y="250" text-anchor="middle" font-size="12" font-weight="bold" fill="#1f2328">入口首頁的未讀鈴鐺</text>
+  <text x="738" y="272" font-size="10.5" fill="#24292f">每 30 秒輪詢 unread-count</text>
+  <text x="738" y="292" font-size="10.5" fill="#24292f">無 WebSocket、無推播(刻意極簡)</text>
+  <text x="738" y="312" font-size="10" fill="#8b949e">⏳ 前端在 portal-landing 側(T12)</text>
+
+  <path d="M688 150 H724" stroke="#4a6785" stroke-width="1.8" marker-end="url(#ab)"/>
+  <path d="M688 300 C 706 300, 706 276, 724 276" fill="none" stroke="#4a6785" stroke-width="1.8" marker-end="url(#ab)"/>
+
+  <!-- ══════ 下半:角色 → 能力閘門 ══════ -->
+  <line x1="24" y1="410" x2="956" y2="410" stroke="#d8dee4" stroke-width="1"/>
+  <text x="24" y="436" font-size="13" font-weight="bold" fill="#1f6feb">角色 → 能力:每一格都是寫死的,加一格要問「它還在自我範圍內嗎」</text>
+
+  <rect x="24" y="452" width="220" height="86" rx="6" fill="#f0f7ee" stroke="#3f8f45" stroke-width="1.8"/>
+  <text x="134" y="474" text-anchor="middle" font-size="12" font-weight="bold" fill="#1f2328">reader</text>
+  <text x="134" y="494" text-anchor="middle" font-size="11" fill="#24292f">read_own</text>
+  <text x="134" y="514" text-anchor="middle" font-size="10.5" fill="#3f8f45">✅ 首登自動授(經核可的偏離)</text>
+  <text x="134" y="530" text-anchor="middle" font-size="10" fill="#57606a">讀自己的訊息 / 標自己已讀 / 看公告</text>
+
+  <rect x="268" y="452" width="220" height="86" rx="6" fill="#fdf0f0" stroke="#cf222e" stroke-width="1.5"/>
+  <text x="378" y="474" text-anchor="middle" font-size="12" font-weight="bold" fill="#1f2328">sender</text>
+  <text x="378" y="494" text-anchor="middle" font-size="11" fill="#24292f">send_message</text>
+  <text x="378" y="514" text-anchor="middle" font-size="10.5" fill="#cf222e">⛔ deny-by-default</text>
+  <text x="378" y="530" text-anchor="middle" font-size="10" fill="#57606a">不得援引 reader 的核可</text>
+
+  <rect x="512" y="452" width="220" height="86" rx="6" fill="#fdf0f0" stroke="#cf222e" stroke-width="1.5"/>
+  <text x="622" y="474" text-anchor="middle" font-size="12" font-weight="bold" fill="#1f2328">announcer</text>
+  <text x="622" y="494" text-anchor="middle" font-size="11" fill="#24292f">publish_announcement</text>
+  <text x="622" y="514" text-anchor="middle" font-size="10.5" fill="#cf222e">⛔ deny-by-default</text>
+  <text x="622" y="530" text-anchor="middle" font-size="10" fill="#57606a">由管理員在後台指派</text>
+
+  <rect x="756" y="452" width="200" height="86" rx="6" fill="#fdf0f0" stroke="#cf222e" stroke-width="1.5"/>
+  <text x="856" y="474" text-anchor="middle" font-size="12" font-weight="bold" fill="#1f2328">admin</text>
+  <text x="856" y="494" text-anchor="middle" font-size="11" fill="#24292f">manage_roles</text>
+  <text x="856" y="514" text-anchor="middle" font-size="10.5" fill="#cf222e">⛔ deny-by-default</text>
+  <text x="856" y="530" text-anchor="middle" font-size="10" fill="#57606a">刻意不含 read_own</text>
+
+  <!-- 四項核可條件 -->
+  <rect x="24" y="558" width="932" height="118" rx="6" fill="#fffbf0" stroke="#bf8700" stroke-width="1.5"/>
+  <text x="36" y="580" font-size="12" font-weight="bold" fill="#1f2328">🔴 「首登自動授 reader」是 portal 2026-08-18 核可的偏離,四項條件同為紅線</text>
+  <text x="36" y="602" font-size="11" fill="#24292f">C1 範圍寫死在自我範圍讀取 —— 對應表是模組層常數,不是設定檔(設定檔可以被改寬,而改寬沒有症狀)</text>
+  <text x="36" y="622" font-size="11" fill="#24292f">C2 reader 須可由本專案後台單獨停用 —— per-user 即時;全域開關需重啟(已知限制)</text>
+  <text x="36" y="642" font-size="11" fill="#24292f">C3 以反向測試釘住 C1 並納入 CI —— 「reader 寄信 → 403」「reader 發公告 → 403」</text>
+  <text x="36" y="662" font-size="11" fill="#24292f">C4 M4 上線一週內回報實測數字;portal 得單方撤回 —— 撤回後回到全 deny</text>
+
+  <defs>
+    <marker id="ab" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto">
+      <path d="M0 0 L9 4.5 L0 9 z" fill="#4a6785"/>
+    </marker>
+    <marker id="ag" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto">
+      <path d="M0 0 L9 4.5 L0 9 z" fill="#afb8c1"/>
+    </marker>
+  </defs>
+</svg>
+</figure>
+<h3>2.1 為什麼是兩種形狀,不是一種</h3>
+<div class="tablewrap"><table><thead><tr><th></th><th><code>message</code></th><th><code>announcement</code> + <code>announcement_read</code></th></tr></thead><tbody><tr><td>形狀</td><td><strong>逐人一列</strong></td><td><strong>一則對多人</strong>,已讀才逐人一列</td></tr><tr><td>已讀狀態</td><td>就在那一列上(<code>is_read</code> / <code>read_at</code>)</td><td>另一張表(有 <code>(公告, 人)</code> 唯一約束)</td></tr><tr><td>為什麼</td><td>每個人的內容不同,本來就要一人一列</td><td>一萬個人的公告若逐人複製,就是一萬列<strong>內容相同</strong>的資料</td></tr></tbody></table></div>
+<h3>2.2 角色 → 能力:每一格都是寫死的</h3>
+<div class="tablewrap"><table><thead><tr><th>角色</th><th>能力</th><th>怎麼取得</th></tr></thead><tbody><tr><td><code>reader</code></td><td><code>read_own</code>(讀自己的訊息 / 標自己已讀 / 看有效公告)</td><td>✅ <strong>首登自動授</strong></td></tr><tr><td><code>sender</code></td><td><code>send_message</code></td><td>⛔ deny-by-default,管理員指派</td></tr><tr><td><code>announcer</code></td><td><code>publish_announcement</code></td><td>⛔ deny-by-default,管理員指派</td></tr><tr><td><code>admin</code></td><td><code>manage_roles</code></td><td>⛔ deny-by-default(<strong>刻意不含 <code>read_own</code></strong>)</td></tr></tbody></table></div>
+<p>🔴 <strong>對應表寫成模組層常數(<code>app/authz.py</code>),不是設定檔。</strong><br>設定檔可以被改寬,而<strong>改寬不會有任何症狀</strong>——功能上一切正常,<br>只在有人做了不該做的事時才顯現,而那時已經發生了。</p>
+<p>⚠ <strong><code>admin</code> 刻意不含 <code>read_own</code></strong>:管身分與讀信是兩件事。綁在一起會讓<br>「單獨停用 <code>reader</code>」對管理員失效。管理員也要讀自己的信時,他身上另外有<br><code>reader</code>(首登就有)。</p>
+<h3>2.3 🔴「首登自動授 reader」是一個<strong>經核可的偏離</strong>,不是預設行為</h3>
+<p>平台契約的預設是 <strong>deny-by-default</strong>:首登建號、零角色、看到待開通頁。<br>本專案向 portal 申請並於 <strong>2026-08-18 獲核可</strong>偏離,理由是<br>「<code>reader</code> 的可及集合在定義上恆等於本人資料——deny-by-default 要防的是<br>拿到別人的東西,而這裡沒有別人的東西」。</p>
+<p><strong>核可附四項條件,同列本專案紅線:</strong></p>
+<div class="tablewrap"><table><thead><tr><th>條件</th><th>落點</th></tr></thead><tbody><tr><td><strong>C1</strong> 範圍寫死在自我範圍讀取</td><td><code>app/authz.py</code> 的 <code>ROLE_CAPABILITIES</code></td></tr><tr><td><strong>C2</strong> <code>reader</code> 須可由本專案後台<strong>單獨停用</strong></td><td><code>user_role.enabled</code>(per-user,即時)+ <code>INBOX_AUTO_GRANT_READER</code>(全域,⚠ 需重啟)</td></tr><tr><td><strong>C3</strong> 以<strong>反向測試</strong>釘住 C1 並納入 CI</td><td><code>reader</code> 寄信 → 403、<code>reader</code> 發公告 → 403</td></tr><tr><td><strong>C4</strong> M4 上線一週內回報實測;<strong>portal 得單方撤回</strong></td><td>全域開關關掉即回到全 deny</td></tr></tbody></table></div>
+<h3>2.4 🔴 現在<strong>做不到</strong>的三件事(不寫出來,讀的人會以為現在就有)</h3>
+<div class="tablewrap"><table><thead><tr><th>做不到的事</th><th>為什麼</th><th>要開放需要什麼</th></tr></thead><tbody><tr><td><strong>公告的群組定向</strong></td><td>需要 <code>groups</code> claim,而本專案的 OIDC client <strong>刻意沒有申請</strong></td><td>另向 portal 申請契約 §4.2a <strong>L2</strong></td></tr><tr><td><strong>收件匣顯示寄件人姓名</strong></td><td>契約 §4.2a L1 明文:顯示名稱快取<strong>不得出現在一般使用者可見頁面</strong></td><td>portal 的 <strong>DI-3 裁決</strong>(已排定 M4 上線後與 rf-workorder #14 併案)</td></tr><tr><td><strong>各系統推送系統通知</strong></td><td>寫入型 S2S;§11.7 原本一律不核發</td><td>✅ 已於 2026-08-18 <strong>原則核可</strong>;實作是 T14(M5)</td></tr></tbody></table></div>
+<p>⚠ <code>audience</code> 欄位<strong>照上游建了,但資料庫 CHECK 把它擋在 <code>all</code></strong>。<br>理由:<strong>建了欄位卻假裝能用,比不建更糟</strong>——發布端會以為自己設定了收件範圍,<br>而實際上每一則都送給所有人,<strong>而那件事在畫面上完全看不出來</strong>。</p>
+<hr>
+<h2>3. 技術架構</h2>
+<figure class="svg"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 620" font-family="-apple-system,'Segoe UI','Noto Sans TC','Microsoft JhengHei',sans-serif" font-size="13">
+  <!-- cats-inbox 架構總覽(light 主題、無外部依賴;憲法第四條5) -->
+  <rect width="900" height="620" fill="#ffffff"/>
+  <text x="450" y="28" text-anchor="middle" font-size="16" font-weight="bold" fill="#1f2328">cats-inbox 架構總覽(掛統一入口 /inbox/)</text>
+
+  <!-- 使用者瀏覽器 -->
+  <rect x="360" y="46" width="180" height="40" rx="6" fill="#eef4fb" stroke="#4a6785" stroke-width="1.5"/>
+  <text x="450" y="71" text-anchor="middle" fill="#1f2328">使用者瀏覽器</text>
+
+  <!-- browser -> gateway -->
+  <line x1="450" y1="86" x2="450" y2="118" stroke="#4a6785" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <text x="462" y="106" fill="#57606a" font-size="11">https(全 VM 只開 80/443)</text>
+
+  <!-- gateway -->
+  <rect x="180" y="120" width="540" height="46" rx="6" fill="#fdf3e4" stroke="#b95000" stroke-width="1.5"/>
+  <text x="450" y="141" text-anchor="middle" font-weight="bold" fill="#1f2328">portal-gateway(全 VM 唯一入口,portal 擁有)</text>
+  <text x="450" y="158" text-anchor="middle" font-size="11" fill="#57606a">路由權威:cats-portal gateway/nginx/conf.d/default.conf</text>
+
+  <!-- cats-edge 虛線框 -->
+  <rect x="40" y="196" width="820" height="210" rx="8" fill="none" stroke="#8c959f" stroke-width="1.2" stroke-dasharray="7 5"/>
+  <text x="58" y="216" font-size="11" fill="#57606a">external network:cats-edge(只有各系統的「對外容器」在此)</text>
+
+  <!-- gateway 分流線 -->
+  <line x1="290" y1="166" x2="150" y2="238" stroke="#8c959f" stroke-width="1.2" marker-end="url(#arrowg)"/>
+  <line x1="390" y1="166" x2="330" y2="238" stroke="#8c959f" stroke-width="1.2" marker-end="url(#arrowg)"/>
+  <line x1="520" y1="166" x2="540" y2="238" stroke="#1a7f37" stroke-width="2" marker-end="url(#arrowb)"/>
+  <line x1="640" y1="166" x2="750" y2="238" stroke="#8c959f" stroke-width="1.2" marker-end="url(#arrowg)"/>
+  <text x="185" y="232" font-size="11" fill="#57606a">/</text>
+  <text x="345" y="228" font-size="11" fill="#57606a">/auth/</text>
+  <text x="555" y="228" font-size="11" font-weight="bold" fill="#1a7f37">/inbox/</text>
+  <text x="712" y="228" font-size="11" fill="#57606a">/compliance/ /core/ /plm/ /upload/</text>
+
+  <!-- landing -->
+  <rect x="75" y="240" width="150" height="56" rx="6" fill="#f6f8fa" stroke="#4a6785"/>
+  <text x="150" y="264" text-anchor="middle" fill="#1f2328">portal-landing</text>
+  <text x="150" y="282" text-anchor="middle" font-size="11" fill="#57606a">入口首頁+未讀鈴鐺</text>
+
+  <!-- keycloak -->
+  <rect x="255" y="240" width="150" height="56" rx="6" fill="#f6f8fa" stroke="#4a6785"/>
+  <text x="330" y="264" text-anchor="middle" fill="#1f2328">Keycloak(IdP)</text>
+  <text x="330" y="282" text-anchor="middle" font-size="11" fill="#57606a">realm sporton · OIDC</text>
+
+  <!-- cats-inbox-api -->
+  <rect x="460" y="240" width="170" height="66" rx="6" fill="#e8f4ec" stroke="#1a7f37" stroke-width="2"/>
+  <text x="545" y="263" text-anchor="middle" font-weight="bold" fill="#1f2328">cats-inbox-api</text>
+  <text x="545" y="281" text-anchor="middle" font-size="11" fill="#57606a">FastAPI+Jinja2(本專案)</text>
+  <text x="545" y="297" text-anchor="middle" font-size="11" fill="#57606a">只 expose 8080,不 publish</text>
+
+  <!-- 其他系統 -->
+  <rect x="680" y="240" width="150" height="56" rx="6" fill="#f6f8fa" stroke="#4a6785"/>
+  <text x="755" y="264" text-anchor="middle" fill="#1f2328">各既有系統</text>
+  <text x="755" y="282" text-anchor="middle" font-size="11" fill="#57606a">compliance/core/PLM/upload</text>
+
+  <!-- 輪詢 -->
+  <path d="M 150 296 L 150 350 L 460 350 L 460 306" fill="none" stroke="#4a6785" stroke-width="1.2" stroke-dasharray="4 4" marker-end="url(#arrow)"/>
+  <text x="250" y="344" font-size="11" fill="#4a6785">每 30 秒輪詢 GET /inbox/api/v1/unread-count</text>
+
+  <!-- S2S 推送 -->
+  <path d="M 755 296 L 755 378 L 630 378 L 630 306" fill="none" stroke="#b95000" stroke-width="1.5" stroke-dasharray="6 4" marker-end="url(#arrowo)"/>
+  <text x="646" y="372" font-size="11" fill="#b95000">S2S 推送(client_credentials,M5;契約章節定稿後開放)</text>
+
+  <!-- OIDC 線 -->
+  <path d="M 405 268 L 460 268" fill="none" stroke="#4a6785" stroke-width="1.2" stroke-dasharray="2 3" marker-end="url(#arrow)"/>
+  <text x="408" y="258" font-size="10" fill="#4a6785">OIDC</text>
+
+  <!-- inbox 內部網 -->
+  <rect x="430" y="440" width="300" height="120" rx="8" fill="none" stroke="#8c959f" stroke-width="1.2" stroke-dasharray="7 5"/>
+  <text x="448" y="462" font-size="11" fill="#57606a">inbox 內部網(不上 cats-edge)</text>
+  <line x1="545" y1="306" x2="545" y2="478" stroke="#1a7f37" stroke-width="1.5" marker-end="url(#arrowb)"/>
+
+  <!-- pg -->
+  <rect x="460" y="480" width="240" height="60" rx="6" fill="#f6f8fa" stroke="#4a6785" stroke-width="1.5"/>
+  <text x="580" y="505" text-anchor="middle" fill="#1f2328">cats-inbox-pg(PostgreSQL 15)</text>
+  <text x="580" y="524" text-anchor="middle" font-size="11" fill="#57606a">不上 cats-edge、不對主機發布 port</text>
+
+  <!-- 註解 -->
+  <text x="60" y="590" font-size="11" fill="#57606a">身分:業務庫只存 sub(SSO 契約 v2.7)· 訊息 body 純文字+跳脫 · action_url 同站白名單 · 階段一 UI 零人名(§4.2a 缺口見計畫書 §2.3)</text>
+
+  <defs>
+    <marker id="arrow" markerWidth="9" markerHeight="9" refX="7" refY="3.5" orient="auto"><path d="M0,0 L7,3.5 L0,7 Z" fill="#4a6785"/></marker>
+    <marker id="arrowg" markerWidth="9" markerHeight="9" refX="7" refY="3.5" orient="auto"><path d="M0,0 L7,3.5 L0,7 Z" fill="#8c959f"/></marker>
+    <marker id="arrowb" markerWidth="9" markerHeight="9" refX="7" refY="3.5" orient="auto"><path d="M0,0 L7,3.5 L0,7 Z" fill="#1a7f37"/></marker>
+    <marker id="arrowo" markerWidth="9" markerHeight="9" refX="7" refY="3.5" orient="auto"><path d="M0,0 L7,3.5 L0,7 Z" fill="#b95000"/></marker>
+  </defs>
+</svg>
+</figure>
+<div class="tablewrap"><table><thead><tr><th>元件</th><th>說明</th><th>網路</th></tr></thead><tbody><tr><td><code>cats-inbox-api</code></td><td>FastAPI + Jinja2,prebuilt image、non-root、健康檢查 <code>/inbox/health</code>(<strong>刻意不查 DB</strong>)</td><td><code>cats-edge</code>(external)+ 自家內部網;只 <code>expose 8080</code>,<strong>不 publish</strong></td></tr><tr><td><code>cats-inbox-pg</code></td><td>PostgreSQL 15</td><td><strong>只在自家內部網</strong>;不上 <code>cats-edge</code>、不對主機發布 port</td></tr><tr><td><code>portal-gateway</code></td><td>全 VM <strong>唯一</strong>入口</td><td>路由權威在 <strong>cats-portal</strong>,改它一律走其 PR</td></tr></tbody></table></div>
+<h3>3.1 身分:全部交給 Keycloak</h3>
+<ul><li>Authorization Code + <strong>PKCE(S256)</strong>、<strong>RS256 + JWKS</strong>(快取 1h、支援 <code>kid</code> 輪替)。</li><li>驗 <code>iss</code> / <code>aud</code> / <code>exp</code>,時鐘容忍 <strong>±30 秒</strong>。</li><li><strong>401 = 憑證無效;403 = 已認證但無此權限。</strong> 兩者不得混用——&lt;br&gt;混用會讓查問題的人分不出「我沒登入」還是「我沒被開通」,而下一步完全不同。</li><li>業務庫<strong>只存 <code>sub</code></strong>,不存 email、不存密碼。姓名只有一個受限的快取欄位(見 §4)。</li></ul>
+<p>🔴 <strong>伺服器端主動續期。</strong> access token 只有 300 秒,而伺服器端算繪的 App<br><strong>不會有前端 JS 幫它 refresh</strong>。不做的話症狀是<br>「登入 5 分鐘後靜默退回未登入,而伺服器零錯誤」。</p>
+<h3>3.2 登出有<strong>兩個方向</strong></h3>
+<div class="tablewrap"><table><thead><tr><th>方向</th><th>端點</th><th>行為</th></tr></thead><tbody><tr><td>自發登出</td><td><code>GET /inbox/logout</code></td><td><strong>先清本地 session</strong>,再導 IdP 的 <code>end_session</code></td></tr><tr><td>被通知登出(SLO)</td><td><code>GET /inbox/oidc/frontchannel-logout</code></td><td>免認證、冪等、<strong>只准刪</strong>、回 204</td></tr></tbody></table></div>
+<p>🔴 front-channel 端點是 <strong>IdP 主動呼叫</strong>的,那一刻<strong>使用者的瀏覽器不在現場</strong><br>——這就是 session 存伺服器端(而非無狀態簽章 cookie)的<strong>唯一理由</strong>:<br>無狀態 cookie 只有瀏覽器有,IdP 通知得到而我方無從作廢。</p>
+<h3>3.3 資料表(四張)</h3>
+<div class="tablewrap"><table><thead><tr><th>表</th><th>內容</th><th>關鍵約束</th></tr></thead><tbody><tr><td><code>app_user</code></td><td><code>sub</code> + <code>display_name</code>(L1 快取,nullable)+ <code>is_active</code></td><td><strong>無</strong> email / 密碼 / 姓名欄</td></tr><tr><td><code>user_role</code></td><td><code>(sub, role, enabled)</code></td><td>停用是 <code>enabled=false</code>,<strong>不是刪列</strong></td></tr><tr><td><code>message</code></td><td>逐人一列的通知</td><td>🔴 <code>recipient_sub</code> <strong>不設外鍵</strong></td></tr><tr><td><code>announcement</code> / <code>announcement_read</code></td><td>公告 + 逐人已讀</td><td><code>(公告, 人)</code> 唯一;<code>user_sub</code> <strong>有</strong>外鍵 CASCADE</td></tr></tbody></table></div>
+<p>🔴 <strong>兩張表對「<code>sub</code> 要不要設外鍵」給出相反的答案,而兩邊都是對的:</strong></p>
+<ul><li><code>message.recipient_sub</code> <strong>不設</strong>:推送 API 必須能推給<strong>從未登入過 inbox 的人</strong>&lt;br&gt;(新到職的同事、或 PLM 那 50 位沒有 email 的測試工程師)。設了外鍵,&lt;br&gt;那些推送會被資料庫擋掉,而症狀是「通知沒送到」——<strong>收件人自己不會知道</strong>。</li><li><code>announcement_read.user_sub</code> <strong>要設</strong>:要標記公告已讀,你<strong>必然已經登入過</strong>。</li></ul>
+<hr>
+<h2>4. 個資與安全:這個系統的第一風險</h2>
+<p>站內信是<strong>使用者輸入直接展示給其他人看</strong>,所以本專案在平台紅線之上自我加嚴:</p>
+<div class="tablewrap"><table><thead><tr><th>紅線</th><th>為什麼</th></tr></thead><tbody><tr><td><code>body</code> 一律<strong>純文字</strong>儲存與輸出(輸出必跳脫)</td><td>stored XSS 是第一風險;<strong>同源之下一次 XSS 可觸及 IdP</strong></td></tr><tr><td><code>action_url</code> 只接受<strong>同站</strong>值,否則 400 拒收</td><td>站內通知天生長得「可信」,是現成的釣魚載具</td></tr><tr><td>訊息<strong>主旨與內容不進 log</strong></td><td>log 只記 id、<code>sub</code>、事件類型</td></tr><tr><td><code>sender_sub</code> 一律由後端自 token 取;收件權限後端判定</td><td>前端傳入的身分欄位<strong>一律不採信</strong></td></tr><tr><td>推送 API <strong>必須驗 S2S token</strong></td><td>無驗證的推送端點<strong>不得部署到正式環境</strong></td></tr></tbody></table></div>
+<h3>4.1 顯示名稱:唯一的具名例外,而且範圍很窄</h3>
+<p><code>app_user.display_name</code> 是契約 <strong>§4.2a L1</strong> 的具名例外:</p>
+<ol><li><strong>僅得自本人登入 token 取得</strong>(程式裡只有一條寫入路徑,以源碼檢查釘住);</li><li><strong>僅供管理後台顯示</strong>——一般使用者可見的頁面與 <strong>API 回應</strong>都不得出現;</li><li><strong>不進 log</strong>;4. nullable;5. 附<strong>整批 + 單筆清除工具</strong>;</li><li><strong>授權判定一律不讀它</strong>(以源碼層 AST 檢查釘住,不靠行為測試)。</li></ol>
+<p>⚠ 第 2 點的「<strong>API 回應</strong>」是實測補上的:原本只驗了 HTML 頁面,<br>而往 JSON 回應加一個姓名欄位<strong>測試照樣綠</strong>——模板沒有算繪它,<br>但<strong>前端 JS 拿得到</strong>,而契約禁的是「出現在一般使用者可見的<strong>面</strong>」。</p>
+<hr>
+<h2>5. 使用者介面概念</h2>
+<figure class="svg"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 980 760" font-family="-apple-system,'Segoe UI','Noto Sans TC','Microsoft JhengHei',sans-serif" font-size="13">
+  <!-- cats-inbox UI 概念圖(light 主題、無外部依賴;憲法第四條5)
+       五個畫面的線框。🔴 未實作的畫面以虛線 + 灰字標示。
+       🔴 收件匣頁刻意畫不出任何人名 —— 那不是省略,是規格(§4.2a L1)。 -->
+  <rect width="980" height="760" fill="#ffffff"/>
+  <text x="490" y="26" text-anchor="middle" font-size="16" font-weight="bold" fill="#1f2328">cats-inbox 使用者介面概念圖</text>
+  <text x="490" y="45" text-anchor="middle" font-size="11" fill="#57606a">伺服器端算繪 · Bootstrap 5 本地託管 · light 主題 · 零外部 CDN</text>
+
+  <!-- ══════ ① 入口首頁 + 鈴鐺 ══════ -->
+  <text x="24" y="76" font-size="12" font-weight="bold" fill="#1f6feb">① 統一入口首頁(portal-landing,T12 加鈴鐺)</text>
+  <rect x="24" y="86" width="440" height="182" rx="6" fill="#ffffff" stroke="#afb8c1" stroke-width="1.5" stroke-dasharray="5 3"/>
+  <rect x="24" y="86" width="440" height="34" rx="6" fill="#f6f8fa" stroke="#afb8c1" stroke-width="1.5" stroke-dasharray="5 3"/>
+  <text x="40" y="108" font-size="11.5" font-weight="bold" fill="#57606a">CATS 統一入口</text>
+  <!-- 鈴鐺 -->
+  <circle cx="404" cy="103" r="13" fill="#eef4fb" stroke="#4a6785" stroke-width="1.5"/>
+  <text x="404" y="108" text-anchor="middle" font-size="12">🔔</text>
+  <circle cx="414" cy="94" r="8" fill="#cf222e"/>
+  <text x="414" y="98" text-anchor="middle" font-size="9" fill="#ffffff" font-weight="bold">3</text>
+  <text x="436" y="108" text-anchor="middle" font-size="11" fill="#57606a">登出</text>
+
+  <rect x="44" y="136" width="120" height="52" rx="5" fill="#f6f8fa" stroke="#d8dee4"/>
+  <text x="104" y="166" text-anchor="middle" font-size="11" fill="#57606a">PLM</text>
+  <rect x="176" y="136" width="120" height="52" rx="5" fill="#f6f8fa" stroke="#d8dee4"/>
+  <text x="236" y="166" text-anchor="middle" font-size="11" fill="#57606a">Sporton Core</text>
+  <rect x="308" y="136" width="120" height="52" rx="5" fill="#eef4fb" stroke="#4a6785" stroke-width="1.5"/>
+  <text x="368" y="160" text-anchor="middle" font-size="11" font-weight="bold" fill="#1f2328">站內信</text>
+  <text x="368" y="177" text-anchor="middle" font-size="10" fill="#57606a">/inbox/</text>
+
+  <text x="44" y="214" font-size="10.5" fill="#57606a">鈴鐺每 30 秒打一次 GET /inbox/api/v1/messages/unread-count</text>
+  <text x="44" y="232" font-size="10.5" fill="#cf222e">🔴 漸進增強:inbox 或 IdP 掛掉時鈴鐺消失,不得擋住首頁</text>
+  <text x="44" y="252" font-size="10.5" fill="#8b949e">⏳ 尚未實作(portal 側,T12)</text>
+
+  <!-- ══════ ② 收件匣頁 ══════ -->
+  <text x="516" y="76" font-size="12" font-weight="bold" fill="#1f6feb">② 收件匣頁 GET /inbox/ ✅ 已實作</text>
+  <rect x="516" y="86" width="440" height="300" rx="6" fill="#ffffff" stroke="#4a6785" stroke-width="1.8"/>
+  <rect x="516" y="86" width="440" height="38" rx="6" fill="#f6f8fa" stroke="#4a6785" stroke-width="1.8"/>
+  <text x="534" y="111" font-size="13" font-weight="bold" fill="#1f2328">收件匣</text>
+  <rect x="592" y="98" width="56" height="18" rx="9" fill="#1f6feb"/>
+  <text x="620" y="111" text-anchor="middle" font-size="10" fill="#ffffff" font-weight="bold">3 未讀</text>
+  <rect x="878" y="96" width="60" height="22" rx="4" fill="#ffffff" stroke="#8b949e"/>
+  <text x="908" y="111" text-anchor="middle" font-size="10.5" fill="#57606a">登出</text>
+
+  <!-- 未讀卡片 -->
+  <rect x="534" y="138" width="404" height="66" rx="5" fill="#ffffff" stroke="#d8dee4"/>
+  <rect x="534" y="138" width="4" height="66" fill="#1f6feb"/>
+  <rect x="550" y="150" width="72" height="16" rx="8" fill="#6e7781"/>
+  <text x="586" y="162" text-anchor="middle" font-size="9.5" fill="#ffffff">workorder</text>
+  <rect x="630" y="150" width="40" height="16" rx="8" fill="#1f6feb"/>
+  <text x="650" y="162" text-anchor="middle" font-size="9.5" fill="#ffffff">未讀</text>
+  <text x="550" y="182" font-size="11.5" font-weight="bold" fill="#1f2328">工單 WO-2026-0413 已指派給你</text>
+  <text x="550" y="197" font-size="10" fill="#57606a">2026-08-25 09:12 · 內容純文字,輸出必跳脫</text>
+
+  <!-- 未讀卡片 2 -->
+  <rect x="534" y="214" width="404" height="66" rx="5" fill="#ffffff" stroke="#d8dee4"/>
+  <rect x="534" y="214" width="4" height="66" fill="#1f6feb"/>
+  <rect x="550" y="226" width="52" height="16" rx="8" fill="#6e7781"/>
+  <text x="576" y="238" text-anchor="middle" font-size="9.5" fill="#ffffff">系統</text>
+  <text x="550" y="258" font-size="11.5" font-weight="bold" fill="#1f2328">系統維護通知:8/30 02:00–04:00</text>
+  <rect x="550" y="264" width="80" height="18" rx="4" fill="#1f6feb"/>
+  <text x="590" y="277" text-anchor="middle" font-size="9.5" fill="#ffffff">前往處理</text>
+  <text x="642" y="277" font-size="9.5" fill="#57606a">action_url 只接受同站值</text>
+
+  <!-- 已讀卡片 -->
+  <rect x="534" y="290" width="404" height="52" rx="5" fill="#fafbfc" stroke="#d8dee4"/>
+  <rect x="534" y="290" width="4" height="52" fill="#d8dee4"/>
+  <rect x="550" y="300" width="52" height="16" rx="8" fill="#8b949e"/>
+  <text x="576" y="312" text-anchor="middle" font-size="9.5" fill="#ffffff">sporton</text>
+  <text x="550" y="332" font-size="11.5" fill="#57606a">報價單已核可(已讀)</text>
+
+  <text x="534" y="362" font-size="10.5" fill="#cf222e">🔴 全頁零人名 —— 寄件人一律以 source_app 標籤呈現</text>
+  <text x="534" y="378" font-size="10" fill="#57606a">登入身分只顯示自己的 sub;⚠ 目前無分頁(limit 50)</text>
+
+  <!-- ══════ ③ 待開通頁 ══════ -->
+  <text x="24" y="308" font-size="12" font-weight="bold" fill="#1f6feb">③ 待開通頁 /inbox/pending ✅</text>
+  <rect x="24" y="318" width="220" height="150" rx="6" fill="#ffffff" stroke="#4a6785" stroke-width="1.8"/>
+  <text x="134" y="348" text-anchor="middle" font-size="12" font-weight="bold" fill="#1f2328">帳號待開通</text>
+  <text x="134" y="372" text-anchor="middle" font-size="10.5" fill="#57606a">你已登入,但尚未取得權限</text>
+  <rect x="42" y="386" width="184" height="30" rx="4" fill="#f6f8fa" stroke="#d8dee4"/>
+  <text x="134" y="405" text-anchor="middle" font-size="9.5" fill="#24292f" font-family="monospace">1111…5555</text>
+  <text x="134" y="434" text-anchor="middle" font-size="10" fill="#57606a">請把上面這串交給管理員</text>
+  <text x="134" y="452" text-anchor="middle" font-size="10" fill="#cf222e">🔴 顯示自己的 sub 解「雞生蛋」</text>
+
+  <!-- ══════ ④ 已登出頁 ══════ -->
+  <text x="268" y="308" font-size="12" font-weight="bold" fill="#1f6feb">④ 已登出頁 /inbox/logged-out/ ✅</text>
+  <rect x="268" y="318" width="196" height="150" rx="6" fill="#ffffff" stroke="#4a6785" stroke-width="1.8"/>
+  <text x="366" y="356" text-anchor="middle" font-size="12" font-weight="bold" fill="#1f2328">你已登出</text>
+  <text x="366" y="380" text-anchor="middle" font-size="10.5" fill="#57606a">站內信的登入狀態已清除</text>
+  <rect x="316" y="398" width="100" height="28" rx="4" fill="#1f6feb"/>
+  <text x="366" y="417" text-anchor="middle" font-size="11" fill="#ffffff">重新登入</text>
+  <text x="366" y="446" text-anchor="middle" font-size="10" fill="#cf222e">🔴 不直接導登入頁</text>
+  <text x="366" y="461" text-anchor="middle" font-size="9.5" fill="#57606a">否則看不出登出成功沒有</text>
+
+  <!-- ══════ ⑤ 角色後台 ══════ -->
+  <text x="24" y="500" font-size="12" font-weight="bold" fill="#1f6feb">⑤ 角色後台 /inbox/admin/users ✅(需 admin)</text>
+  <rect x="24" y="510" width="440" height="176" rx="6" fill="#ffffff" stroke="#4a6785" stroke-width="1.8"/>
+  <rect x="24" y="510" width="440" height="32" rx="6" fill="#f6f8fa" stroke="#4a6785" stroke-width="1.8"/>
+  <text x="42" y="531" font-size="11.5" font-weight="bold" fill="#1f2328">使用者與角色</text>
+
+  <line x1="24" y1="562" x2="464" y2="562" stroke="#d8dee4"/>
+  <text x="42" y="557" font-size="10" font-weight="bold" fill="#57606a">sub</text>
+  <text x="200" y="557" font-size="10" font-weight="bold" fill="#57606a">顯示名稱(快取)</text>
+  <text x="330" y="557" font-size="10" font-weight="bold" fill="#57606a">角色</text>
+
+  <text x="42" y="582" font-size="9.5" fill="#24292f" font-family="monospace">1111…5555</text>
+  <text x="200" y="582" font-size="10" fill="#24292f">陳○○</text>
+  <text x="200" y="595" font-size="8.5" fill="#8b949e">更新於 08-25 09:10</text>
+  <rect x="330" y="571" width="50" height="15" rx="7" fill="#3f8f45"/>
+  <text x="355" y="583" text-anchor="middle" font-size="9" fill="#ffffff">reader</text>
+  <rect x="386" y="571" width="60" height="15" rx="7" fill="#ffffff" stroke="#8b949e"/>
+  <text x="416" y="583" text-anchor="middle" font-size="9" fill="#57606a">+ 指派</text>
+
+  <line x1="24" y1="608" x2="464" y2="608" stroke="#eaeef2"/>
+  <text x="42" y="628" font-size="9.5" fill="#24292f" font-family="monospace">2222…6666</text>
+  <text x="200" y="628" font-size="10" fill="#8b949e">(未快取)</text>
+  <rect x="330" y="617" width="50" height="15" rx="7" fill="#3f8f45"/>
+  <text x="355" y="629" text-anchor="middle" font-size="9" fill="#ffffff">reader</text>
+  <rect x="386" y="617" width="66" height="15" rx="7" fill="#bf8700"/>
+  <text x="419" y="629" text-anchor="middle" font-size="9" fill="#ffffff">announcer</text>
+
+  <text x="42" y="656" font-size="10" fill="#cf222e">🔴 顯示名稱只在這一頁出現(§4.2a L1:僅供管理後台)</text>
+  <text x="42" y="672" font-size="10" fill="#57606a">附整批 + 單筆清除工具;授權判定一律不讀它</text>
+
+  <!-- ══════ 右下:三條 UI 紅線 ══════ -->
+  <rect x="516" y="410" width="440" height="276" rx="6" fill="#fffbf0" stroke="#bf8700" stroke-width="1.5"/>
+  <text x="530" y="434" font-size="12.5" font-weight="bold" fill="#1f2328">🔴 三條會被違反而沒有錯誤訊息的 UI 紅線</text>
+
+  <text x="530" y="462" font-size="11.5" font-weight="bold" fill="#24292f">1. 零外部 CDN(契約 §4.10)</text>
+  <text x="530" y="480" font-size="10.5" fill="#24292f">Bootstrap 本地託管於 /inbox/assets/vendor/。</text>
+  <text x="530" y="496" font-size="10.5" fill="#57606a">⚠ 檔案不在 StaticFiles 掛載目錄下時 app 不送出去 ——</text>
+  <text x="530" y="512" font-size="10.5" fill="#57606a">症狀是「整頁沒有樣式」而伺服器零錯誤(portal 踩過)。</text>
+
+  <text x="530" y="542" font-size="11.5" font-weight="bold" fill="#24292f">2. body 純文字 + 輸出必跳脫</text>
+  <text x="530" y="560" font-size="10.5" fill="#24292f">站內信是「使用者輸入直接展示給別人看」。</text>
+  <text x="530" y="576" font-size="10.5" fill="#57606a">同源之下(D2″ 單一 hostname)一次 stored XSS</text>
+  <text x="530" y="592" font-size="10.5" fill="#57606a">可觸及 IdP —— 這是本系統第一風險。</text>
+
+  <text x="530" y="622" font-size="11.5" font-weight="bold" fill="#24292f">3. action_url 只接受同站值</text>
+  <text x="530" y="640" font-size="10.5" fill="#24292f">/ 開頭的相對路徑,或 catsapp.sporton.com.tw 前綴;</text>
+  <text x="530" y="656" font-size="10.5" fill="#57606a">其餘寫入時 400 拒收 —— 站內通知是現成的釣魚載具,</text>
+  <text x="530" y="672" font-size="10.5" fill="#57606a">因為它天生就長得「可信」。</text>
+</svg>
+</figure>
+<h3>5.1 五個畫面各自解決一件事</h3>
+<div class="tablewrap"><table><thead><tr><th>畫面</th><th>解決什麼</th><th>狀態</th></tr></thead><tbody><tr><td>入口鈴鐺</td><td>讓人<strong>不必進來就知道有沒有新的</strong></td><td>⏳ T12(portal 側)</td></tr><tr><td>收件匣頁</td><td>看自己的訊息、點開即已讀</td><td>✅ T08</td></tr><tr><td>待開通頁</td><td>🔴 解 deny-by-default 的<strong>雞生蛋</strong>:第一個使用者無人能開通他,故頁面顯示<strong>他自己的 <code>sub</code></strong> 讓他自助交給管理員</td><td>✅ T05</td></tr><tr><td>已登出頁</td><td>讓人<strong>看得出登出成功了</strong></td><td>✅ T06</td></tr><tr><td>角色後台</td><td>指派角色;顯示名稱<strong>只在這一頁出現</strong></td><td>✅ T05</td></tr></tbody></table></div>
+<h3>5.2 三條 UI 紅線</h3>
+<ol><li><strong>零外部 CDN</strong>(契約 §4.10):Bootstrap 5 本地託管。&lt;br&gt;⚠ 檔案不在 <code>StaticFiles</code> 掛載目錄下時 app <strong>不會送出去</strong> ——&lt;br&gt;症狀是「整頁沒有樣式」而<strong>伺服器零錯誤</strong>(portal 2026-08-03 踩過)。</li><li><strong>light 主題寫死</strong>,不做 <code>prefers-color-scheme</code> 深色切換(憲法第四條 1/2)。</li><li><strong>階段一零人名</strong>:寄件人一律以 <code>source_app</code> 標籤呈現。&lt;br&gt;這不是「還沒做」,是 DI-3 裁決前的<strong>規格</strong>。</li></ol>
+<p>⚠ <strong>已知缺口:收件匣列表目前沒有分頁</strong>(<code>limit=50</code>)。<br>這不是效能問題,是<strong>功能缺口</strong>——第 51 則就看不到了,<br>而它在測試資料只有兩三筆時完全看不出來。</p>
+<hr>
+<h2>6. 現在做到哪</h2>
+<div class="tablewrap"><table><thead><tr><th>里程碑</th><th>內容</th><th>狀態</th></tr></thead><tbody><tr><td>M0 / M1</td><td>憲法、計畫書、服務骨架、容器紅線</td><td>✅</td></tr><tr><td>M2 SSO</td><td>client 核發、OIDC 登入、登出雙向、首登建號與角色</td><td>✅</td></tr><tr><td>M3 通知核心</td><td>資料表 ✅、讀取 API + 收件匣 UI ✅、公告 ⬜、安全紅線落地 ⬜</td><td>🔵</td></tr><tr><td>M4 掛上入口</td><td>gateway 路由、上線冒煙、入口鈴鐺</td><td>⬜</td></tr><tr><td>M5 系統通知</td><td>推送 API(待第一個來源系統拍板)</td><td>⬜</td></tr><tr><td>M6 人對人</td><td>階段二(待 DI-3 裁決)</td><td>⬜</td></tr></tbody></table></div>
+<p><strong>測試 125 項全綠</strong>(文件層 40 + pytest 85);每個任務的紅→綠證據在 <code>docs/dev-logs/</code>。</p>
+<p>⚠ <strong>尚未在 VM 上跑過</strong>:真人端到端登入、PostgreSQL <strong>15</strong>(本機只有 16)、<br>容器實際啟動、gateway 路由。這些都排在 T11。</p>
+<hr>
+<h2>附錄:引用的上位規約(只引用,不複製維護)</h2>
+<div class="tablewrap"><table><thead><tr><th>規約</th><th>權威位置</th><th>已對齊版本</th></tr></thead><tbody><tr><td>帳號系統接入契約(SSO/OIDC)</td><td>cats-portal <code>DOCS/帳號系統接入契約_SSO.md</code></td><td>v3.3(逐條對齊:<code>docs/契約對齊盤點_v3.3.md</code>)</td></tr><tr><td>App 服務對齊指南(gateway)</td><td>cats-portal <code>DOCS/App服務對齊指南_portal-gateway整合.md</code></td><td>v1.3</td></tr><tr><td>站內信通知中心設計規劃(功能上游)</td><td>cats-portal <code>DOCS/站內信通知中心設計規劃.md</code></td><td>v1.6</td></tr><tr><td>portal 平台紅線</td><td>cats-portal <code>CLAUDE.md</code></td><td>v1.19</td></tr></tbody></table></div>
+<hr>
+<h2>版本歷史</h2>
+<div class="tablewrap"><table><thead><tr><th>版本</th><th>日期</th><th>修改人</th><th>摘要</th></tr></thead><tbody><tr><td>v1.0</td><td>2026-08-25</td><td>Benny</td><td>初版(D01):把散在上游規劃、開發計畫書與十幾篇 dev-log 裡的三件事收攏成一份給人看的說明——<strong>商業邏輯</strong>(一則通知的一生、兩種資料形狀、角色→能力、經核可的偏離與其四條件)、<strong>技術架構</strong>(容器與網路、身分、登出兩個方向、四張表與兩張表相反的外鍵決定)、<strong>介面概念</strong>(五個畫面各自解決什麼、三條 UI 紅線)。🔴 §2.4 專節寫<strong>現在做不到的三件事</strong>(群組定向、顯示姓名、系統推送)並註明各自要什麼才能開放——不寫的話讀的人會以為現在就有。新增兩張 SVG(商業邏輯、UI 概念圖),沿用既有的架構總覽 SVG;md 版以 ASCII 文字圖對應(第四條5)</td></tr></tbody></table></div>
+</body>
+</html>

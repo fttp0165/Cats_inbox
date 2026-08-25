@@ -58,17 +58,17 @@ else
 fi
 
 echo "[2] 正式文件鏈:md 權威版存在且合第七條"
-for f in docs/開發計畫書.md docs/任務表.md docs/TDD測試計畫表.md docs/SSO接入申請.md docs/契約對齊盤點_v3.3.md README.md; do
+for f in docs/開發計畫書.md docs/任務表.md docs/TDD測試計畫表.md docs/SSO接入申請.md docs/契約對齊盤點_v3.3.md docs/架構說明.md README.md; do
   if [ -f "$f" ]; then check_meta "$f"; else ng "$f" "檔案不存在"; fi
 done
 
 echo "[3] 正式文件 HTML 發布版存在(第四條4)"
-for f in docs/開發計畫書.html docs/任務表.html docs/TDD測試計畫表.html docs/SSO接入申請.html docs/契約對齊盤點_v3.3.html README.html; do
+for f in docs/開發計畫書.html docs/任務表.html docs/TDD測試計畫表.html docs/SSO接入申請.html docs/契約對齊盤點_v3.3.html docs/架構說明.html README.html; do
   [ -f "$f" ] && ok "$f 存在" || ng "$f" "HTML 版不存在(第四條4:md+HTML 並存)"
 done
 
 echo "[4] HTML 為 light 主題、無外部依賴(第四條1/2、契約 §4.10 精神)"
-for f in docs/開發計畫書.html docs/任務表.html docs/TDD測試計畫表.html docs/SSO接入申請.html docs/契約對齊盤點_v3.3.html README.html; do
+for f in docs/開發計畫書.html docs/任務表.html docs/TDD測試計畫表.html docs/SSO接入申請.html docs/契約對齊盤點_v3.3.html docs/架構說明.html README.html; do
   [ -f "$f" ] || continue
   if grep -q "prefers-color-scheme: *dark" "$f"; then
     ng "$f" "含 prefers-color-scheme: dark(第四條2 禁止)"
