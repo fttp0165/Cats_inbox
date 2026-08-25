@@ -1,8 +1,8 @@
 # cats-inbox TDD 測試計畫表
 
 **建立日期:** 2026-08-15 09:40
-**最後更新:** 2026-08-25 15:05
-**版本:** v1.9
+**最後更新:** 2026-08-25 16:20
+**版本:** v1.10
 
 > 依 `docs/開發計畫書.md` §3 的架構逐元件展開:**每個任務動工前該先寫哪一支會失敗的測試**。
 > 憲法第三條:先寫紅測試釘住預期行為,才改程式;「測試全綠」指**實際跑過看到綠燈**。
@@ -142,6 +142,14 @@ front-channel logout(SLO)         test_auth.py(T06:免認證、冪等、只刪 c
 | T09 | `test_announcements.py::test_active_response_has_no_author_identity` | 回應無 `author_sub`、無姓名(**先寫入 L1 快取再斷言**)| §4.2a L1;不先寫入的話快取為空時必然通過=**假綠**(T08 踩過)|
 | T09 | 🔴 `test_announcements.py::test_inbox_page_shows_active_announcements` | 收件匣頁顯示有效公告、不顯示過期的 | 沒有這條的話**公告上線後沒有任何畫面顯示它**,而每一層都回 200 |
 | T09 | `test_announcements.py::test_every_timestamp_in_api_responses_carries_a_timezone` | 公告**與訊息**的每個 `*_at` 都帶時區位移 | 我方拒收不帶時區的**輸入**,就不能吐出不帶時區的**輸出**。⚠ 在 SQLite 上 `.isoformat()` 是 naive、PG 上帶時區——**本機與正式行為不同** |
+| T09b | 🔴 `test_publish_form.py::test_post_without_csrf_is_403_and_writes_nothing` | 缺 CSRF token → **403 且零列寫入** | 本專案第一個 POST 表單。CSRF 成功時**沒有錯誤訊息** —— 受害者只會看到一則自己沒發過的公告 |
+| T09b | 🔴 `test_publish_form.py::test_csrf_token_of_another_session_is_rejected` | 別的 session 的 token 不得通行 | 擋「token 只驗簽章、不綁 session」:攻擊者在自己 session 拿一個合法 token 就能打受害者,而它通過所有「有 token 就放行」的測試 |
+| T09b | 🔴 `test_publish_form.py::test_csrf_token_is_not_the_session_key_in_disguise` | token 不得含 session key;且必須是**純** 64 字元 HMAC 十六進位 | 用簽章(非 HMAC)做 token 會把 session key **明文帶到 HTML 上**。⚠ 第一版斷言拿 `cookie.split(".")[0]` 當 key,而**那是 key 的 base64** —— 突變逃掉了 |
+| T09b | 🔴 `test_publish_form.py::test_form_datetime_is_interpreted_as_taipei_time` | 表單填 `2026-08-30T02:00`(台北)→ DB 存 `2026-08-29T18:00Z`,**斷言實際的 UTC 值** | 只斷言「發布成功」的話,差 8 小時也會回 303。⚠ 比對時**不可用 `astimezone`**(對 naive 會當成執行機器的本地時區,CI 上剛好對而開發機差 8 小時)|
+| T09b | 🔴 `test_publish_form.py::test_bad_input_rerenders_form_with_readable_message` | 五種 400:**在錯誤框內**有具體訊息、**已填內容仍在**、零列寫入 | ⚠ 兩個第一版的洞:測試資料用「標題」「內容」而那兩個詞在 `<label>` 裡本來就有;對**整頁** `re.search` 欄位名 —— 兩者都讓斷言永遠成立 |
+| T09b | `test_publish_form.py::test_inbox_shows_publish_link_only_to_announcer` | `announcer` 看得到、`reader` 看不到(**兩個方向都測**) | 只測一個方向的話,「永遠顯示」或「永遠不顯示」各有一半會通過 |
+| T09b | `test_publish_form.py::test_published_announcement_appears_on_inbox_immediately` | 成功 **303** 導回 `/inbox/`,公告當場出現 | 回 200 的話,使用者按重新整理會**再發一則** |
+| T09b | `test_publish_form.py::test_form_page_is_csp_clean` | CSP + `<style>` 帶本次 nonce + **零 JS** + 零行內樣式屬性;**且先斷言 200 與「找得到 `<style>`」** | ⚠ 少了後半,這支測試在「路由還不存在」時**會通過**:404 的 JSON 沒有那些東西,而 CSP 標頭是 middleware 加的 |
 | T10 | `test_security.py::test_message_subject_and_body_are_escaped_on_page` | 送入 `<script>alert(1)</script>`,輸出是跳脫後的字面文字。⚠ **同時斷言跳脫後的字面「有出現」** | 🔴 R1:同源之下一次 stored XSS 可觸及 IdP。只驗「原始標籤不出現」的話,「乾脆不顯示 body」也會通過 |
 | T10 | `test_security.py::test_announcement_title_and_body_are_escaped_on_page` | 公告同樣跳脫 | 公告一則對多人,注入的影響半徑比單封訊息大 |
 | T10 | `test_security.py::test_admin_page_escapes_display_name` | 後台的顯示名稱也跳脫 | 那個值來自 IdP,不是我方產生的 |
@@ -204,10 +212,11 @@ front-channel logout(SLO)         test_auth.py(T06:免認證、冪等、只刪 c
 | **收件匣層 14 項(T08)** | ✅ 已跑、全綠(2026-08-25);含靜態資源守門 |
 | **公告層 21 項(T09)** | ✅ 已跑、全綠(2026-08-25);含邊界注入時鐘與「輸出時間必帶時區」|
 | **安全層 41 項(T10)** | ✅ 已跑、全綠(2026-08-25);含 20 個 `action_url` 參數化案例、1 支 AST 源碼檢查、CSP 的路由列舉守門 |
+| **發布表單層 17 項(T09b)** | ✅ 已跑、全綠(2026-08-25);含 CSRF 三態、時區的實際 UTC 值斷言 |
 | **schema 層 10 項(T07)** | ✅ 已在**真的 PostgreSQL 16.13** 上跑過;含 model↔migration 的 schema 比對 |
 | **migration 層 3 項(T05)** | ✅ 已在**真的 PostgreSQL 16.13** 上跑過。🔴 **PG15 未演練**(本機無 PG15、無 docker daemon)——留 T11 於 VM 補;⚠ 無 PG 時本組 **skip**,`run_all.sh` 會把 skip 數量印出來 |
 | M4–M6 測試 | ⬜ **尚未撰寫**(規格見 §3;不得視為已覆蓋)。⚠ T14 的規格已於 2026-08-18 由 portal 核定,五支測試的斷言已具體化 |
-| T09b / T11 / T12 / T14–T17 測試 | ⬜ 尚未撰寫(規格見 §3)|
+| T10b / T11 / T12 / T14–T17 測試 | ⬜ 尚未撰寫(規格見 §3)|
 | 真 IdP / gateway 冒煙 | ⬜ **尚未執行**(client 已核發,但 secret 尚未進本服務;需 T11 路由。CI 跑不動) |
 | `docker compose config` 解析 | ✅ 已於本機驗過(Compose v5.1.1);**容器實際啟動尚未驗**(本環境無 docker daemon) |
 
@@ -416,12 +425,34 @@ JSON 欄位就是那個面。已補兩條:①API 回應不得出現快取的姓�
 ⚠ 三次的共同形狀:**量測工具本身沒有測試**。所以每一輪都要看它印的**警示行**,
 不是只看最後那個總數。
 
+
+### 5.10 突變檢查(T09b,2026-08-25)
+
+**19 項全被抓到** —— 🔴 **這是修掉三個測試洞之後的數字。**
+
+第一輪有 **3 項沒抓到,而三個都是我的斷言寫錯**(不是量測工具問題):
+
+| 突變 | 為什麼逃掉 | 修法 |
+|---|---|---|
+| CSRF token 把 session key 直接串進去 | 拿 `cookie.split(".")[0]` 當 session key 比對,而**那是 key 的 base64** | 改用 `store.unseal(cookie)`;加一條「token 必須是**純** 64 字元 HMAC 十六進位」 |
+| 400 時清空表單 | 測試值用「標題」「內容」,而那兩個詞**在 `<label>` 裡本來就有** | 值改成不會出現在模板裡的字串 |
+| 400 時只寫「發布失敗」 | 對**整頁** `re.search(欄位名)`,那些詞在 label 裡本來就有 | 先抓出 `alert-danger` 那一塊,只在**錯誤框內**比對 |
+
+🔴 **共同形狀:斷言的對象裡本來就含有我要找的字串。**
+三者都讓測試看起來很嚴格而實際上**永遠通過** —— 而只跑一次是綠的,
+**不會有任何線索**。
+
+⚠ 這是突變檢查第一次抓到**測試本身**的邏輯錯誤;
+§5.7 / §5.8 / §5.9 那三次抓到的都是**量測工具**的問題
+(sed 沒配到、sed 改錯語意、選擇器選不到測試)。兩類都要防。
+
 ---
 
 ## 版本歷史
 
 | 版本 | 日期 | 修改人 | 摘要 |
 |---|---|---|---|
+| v1.10 | 2026-08-25 | Benny | **T09b 完工回寫**:§3 新增 T09b 的 **8 列**(CSRF 三態、時區的實際 UTC 值、五種 400 的「錯誤框內 + 保留輸入」、入口連結雙向、303、CSP 乾淨);§5 覆蓋現況加**發布表單層 17 項**;新增 §5.10 突變檢查 **19/19**。🔴 §5.10 記下**三個測試洞**,共同形狀是**斷言的對象裡本來就含有我要找的字串**——三者都讓測試看起來嚴格而**永遠通過**,而只跑一次是綠的不會有任何線索。⚠ 這是突變檢查第一次抓到**測試本身**的邏輯錯誤;前三次(§5.7–5.9)抓到的都是**量測工具**的問題。兩類都要防 |
 | v1.9 | 2026-08-25 | Benny | **T10 完工回寫**:§3 的 T10 由 3 列擴為 **15 列**(原本只寫了跳脫、四則反例、log 三條,而檔名還寫成 `test_messages.py`);反例由 4 則擴為 **14 則**;§5 覆蓋現況加**安全層 41 項**;新增 §5.9 突變檢查 **19/19**。🔴 兩條原規格裡沒有、而壞掉不會有錯誤訊息的:①**輸出側也要擋**(寫入側白名單是 T10 才加的,之前寫進去的列全都繞過了它),②**算繪後不得有行內樣式屬性** —— nonce 只對元素有效,`style-src 'nonce-…'` 會把 `style="…"` 屬性整批擋掉,**「`<style>` 帶了 nonce」不等於「樣式會生效」**。🔴 §5.9 記下量測工具第三次出問題,且這次會產生**假 ✅**:`-k` 打錯時 pytest 回 rc=5/4 也是非零,而腳本把非零一律讀成「抓到」 |
 | v1.8 | 2026-08-25 | Benny | **T09 完工回寫**:§3 的 T09 由 2 列擴為 **11 列**(原本只寫了「非 announcer 403」與「過期不出現」兩條,而檔名還寫成 `test_messages.py`);§5 覆蓋現況加**公告層 21 項**;新增 §5.8 突變檢查 **17/17**。🔴 兩條在原規格裡不存在、而壞掉不會有錯誤訊息的:①**未來的公告也不得出現**(只驗 `ends_at` 是最容易漏的一半),②**甲讀過不得讓乙變已讀**——而該項的突變結果更值得記:把 `user_sub` 從 JOIN 的 ON 搬到 WHERE,症狀不是「已讀錯了」而是**別人一讀那則公告就從我的清單裡消失**,而消失的東西沒有人會回報。⚠ 第一輪有 1 項顯示未抓到,查為 **sed 沒真的改到語意**(加了恆真項而條件還在)——與 T06 的「拿掉 no-store」同一種誤判;腳本已加「突變沒套用就明講」的偵測 |
 | v1.7 | 2026-08-25 | Benny | **T08 完工回寫**:§5 覆蓋現況加收件匣層 14 項;§5.7 突變檢查 **9/9**。🔴 記一個**測試的洞**:「零人名」原本只驗 HTML 頁面,而往 API 回應加姓名欄位**測試照樣綠**(模板沒算繪它,但前端 JS 拿得到,而 §4.2a L1 禁的是「一般使用者可見的面」)——已補「API 回應不得含姓名類欄位」的結構性斷言。⚠ 另記**量測工具**的第二次問題:突變腳本的還原不是原子的,同一秒內完成時 Python 會沿用由突變後原始碼編出的 `.pyc`,使突變留在工作目錄而 `git status` 看不出來;已加 `__pycache__` 清除,並作為「突變腳本不進 repo」的第二個理由 |

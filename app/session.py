@@ -23,6 +23,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import hmac
 import secrets
 from dataclasses import dataclass
 
@@ -86,6 +88,10 @@ class SessionStore:
             # fail-closed:沒有 secret 就不要假裝有 session(紅線:secret 無預設值)
             raise ValueError("INBOX_SESSION_SECRET 未設定,無法建立 session 儲存")
         self._serializer = URLSafeSerializer(secret, salt="cats-inbox-session")
+        # CSRF token 用的原始 secret。🔴 **不能沿用 `URLSafeSerializer`** ——
+        # 它是**簽章不是加密**,token 會把 session key 明文(base64)帶到 HTML 上,
+        # 而那正是密封 cookie 在保護的東西。所以走 HMAC(單向)。
+        self._secret = secret
         self._now = clock or clock_module.now
         self._sessions: dict[str, SessionData] = {}
         self._pending: dict[str, PendingLogin] = {}
@@ -103,6 +109,40 @@ class SessionStore:
             return self._serializer.loads(cookie_value)
         except BadSignature:
             return None
+
+    # ── CSRF(T09b:本專案第一個 POST 表單)────────────────────────
+    def csrf_token(self, key: str) -> str:
+        """為某個 session 產生 CSRF token。
+
+        參數: key — session 的索引鍵(不是 cookie 值)
+        回傳: 十六進位字串
+        副作用: 無(純計算,不存任何東西)
+
+        🔴 **HMAC(單向),不是簽章。** 用 `URLSafeSerializer` 之類的簽章做 token
+           會把 `key` 明文帶到 HTML 上 —— 而 `key` 是密封 cookie 保護的內層值。
+           token 會被算繪到頁面上、可能落在 referer / 快取 / 螢幕截圖裡。
+
+        🔴 **綁 session。** token 綁在 `key` 上,所以攻擊者在自己 session 拿到的
+           合法 token 拿去打受害者的請求會失敗。只驗「簽章對不對」而不綁 session
+           的實作會通過所有「有 token 就放行」的測試,卻完全擋不住 CSRF。
+
+        ⚠ 不另存狀態:token 由 `key` 推導,所以 session 一旦輪替(重新登入、
+           登出、換 secret),舊 token 自動失效 —— 不需要另一份會忘記清理的表。
+        """
+        return hmac.new(
+            self._secret.encode("utf-8"), f"csrf:{key}".encode("utf-8"), hashlib.sha256
+        ).hexdigest()
+
+    def verify_csrf(self, key: str, token: str | None) -> bool:
+        """比對 CSRF token(定值時間比較)。
+
+        回傳: 相符為 True
+        ⚠ 用 `hmac.compare_digest` 而不是 `==`:字串比較會提早結束,
+          而那個時間差理論上可被用來逐字元猜 token。
+        """
+        if not token:
+            return False
+        return hmac.compare_digest(self.csrf_token(key), token)
 
     # ── 登入交易 ──────────────────────────────────────────────────
     def start_login(self, pending: PendingLogin) -> str:

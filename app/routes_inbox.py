@@ -26,7 +26,13 @@ from fastapi import APIRouter, Depends, Request
 from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 
-from app.authz import CAP_READ_OWN, Forbidden, require_capability
+from app.authz import (
+    CAP_PUBLISH_ANNOUNCEMENT,
+    CAP_READ_OWN,
+    Forbidden,
+    has_capability,
+    require_capability,
+)
 from app.db import session_scope
 from app.oidc import log_event
 from app.repo import (
@@ -191,7 +197,11 @@ def build_inbox_router(*, settings) -> APIRouter:
            沒有任何畫面顯示它 —— 而發布 API 回 201、`active` 也回得出來,
            **零錯誤訊息的功能缺口**(理由與處置見 T09 dev-log 計畫段)。
         """
-        sub, _roles = identity
+        sub, roles = identity
+        # 🔴 只在**真的有能力**時才顯示發布入口(T09b)。
+        #    顯示一個點下去會 403 的連結**比不顯示更糟** —— 它讓人以為
+        #    自己做錯了什麼,而其實他從來沒有那個權限。
+        can_publish = has_capability(roles, CAP_PUBLISH_ANNOUNCEMENT)
         with session_scope() as session:
             rows = list_messages(session, recipient_sub=sub)
             items = [_serialize(m) for m in rows]
@@ -210,6 +220,7 @@ def build_inbox_router(*, settings) -> APIRouter:
                 "announcements_unread": sum(
                     1 for a in announcements if not a["is_read"]
                 ),
+                "can_publish": can_publish,
                 "base_path": settings.base_path,
                 # 🔴 刻意傳 `sub` 而不是姓名:待開通頁已經是這個做法(契約 §4.3),
                 #    而收件匣頁**不顯示任何人名**(§4.2a L1、DI-3 未裁決)。

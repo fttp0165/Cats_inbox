@@ -25,18 +25,24 @@
 from __future__ import annotations
 
 import uuid
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Form, Request
+from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, ConfigDict
 
 from app.authz import (
     CAP_PUBLISH_ANNOUNCEMENT,
     CAP_READ_OWN,
+    Forbidden,
     require_capability,
 )
 from app.db import session_scope
 from app.models import AUDIENCE_ALL, AUDIENCES
 from app.oidc import log_event
+from app.deps import resolve_session
 from app.repo import (
     create_announcement,
     list_active_announcements,
@@ -54,6 +60,15 @@ from app.validation import (
 # 對應 `Announcement.title` 的欄寬。🔴 超長必須在這裡擋掉:
 # PostgreSQL 會報錯(500),而 SQLite 直接無視 —— 也就是本機測試綠、上線 500。
 TITLE_MAX = 255
+
+# 🔴 表單的 `datetime-local` **不帶時區**,而 `parse_aware_datetime` 拒收不帶時區的值。
+#    這裡用**固定位移 +08:00** 把表單值補成有時區的值,而頁面上明寫「台北時間」。
+#    ⚠ **這不是放寬 T09 的規則**:API 拒收是因為「呼叫方可能在任何時區,我方無從得知」;
+#    表單可以補是因為「頁面已經告訴使用者這個欄位是什麼時區」—— 宣告不是猜。
+#    ⚠ 用固定位移而非 `ZoneInfo("Asia/Taipei")`:台灣**沒有日光節約**,兩者恆等,
+#    而固定位移不依賴 tzdata。🔴 換到有 DST 的時區時這個寫法會錯,屆時必須改成 ZoneInfo。
+FORM_TZ = timezone(timedelta(hours=8))
+FORM_TZ_LABEL = "台北時間(UTC+8)"
 
 
 class PublishRequest(BaseModel):
@@ -100,6 +115,72 @@ def serialize_announcement(ann, is_read: bool) -> dict:
     }
 
 
+def _validate_and_create(
+    *, author_sub: str, title: str, body: str, audience: str,
+    starts_at_raw: str | None, ends_at_raw: str | None,
+) -> str:
+    """驗值 → 建立公告 → 回傳 id。**API 與表單共用這一條路。**
+
+    參數: `*_raw` 為**帶時區**的 ISO 8601 字串(表單那邊已先補上位移)
+    回傳: 新公告的 id(字串)
+    副作用: INSERT 一列 `announcement`
+    錯誤: 任何值不合法 → BadRequest(400),且**不寫入任何東西**
+
+    🔴 **抽成一處而不是各寫一份。** 兩份各驗一半的話,兩邊遲早會漂移,
+       而**漂移之後寬的那一邊贏** —— 攻擊者只會走那一邊。
+    🔴 所有驗證都在 INSERT 之前。順序反過來的話,400 的回應旁邊
+       已經留下一列公告,而下一個查詢就會把它端出來。
+    """
+    safe_title = require_text(title, field="title", max_length=TITLE_MAX)
+    safe_body = require_text(body, field="body", max_length=20000)
+    safe_audience = require_choice(audience, field="audience", allowed=AUDIENCES)
+
+    starts_at = parse_aware_datetime(starts_at_raw, field="starts_at") if starts_at_raw else None
+    ends_at = parse_aware_datetime(ends_at_raw, field="ends_at") if ends_at_raw else None
+    if starts_at is None:
+        # 沒給就是「現在起生效」。用資料庫預設會讓 starts_at 與比對用的
+        # 「現在」來自兩個不同的時鐘,而差幾毫秒的症狀是**剛發布的公告
+        # 第一次重新整理看不到**。
+        starts_at = datetime.now(timezone.utc)
+    if ends_at is not None and ends_at <= starts_at:
+        raise BadRequest("invalid_window", "失效時間必須晚於生效時間")
+
+    with session_scope() as session:
+        row = create_announcement(
+            session,
+            author_sub=author_sub,      # 🔴 來自 token,不是 payload / 表單
+            title=safe_title,
+            body=safe_body,
+            starts_at=starts_at,
+            ends_at=ends_at,
+            audience=safe_audience,
+        )
+        return str(row.id)
+
+
+def _form_time_to_iso(value: str | None) -> str | None:
+    """把 `datetime-local` 的值(不帶時區)補上表單宣告的位移。
+
+    參數: value — 例 `2026-08-30T02:00`(可為 None / 空字串)
+    回傳: 例 `2026-08-30T02:00+08:00`;沒給則 None
+    副作用: 無
+
+    🔴 **這裡是「補上宣告的時區」,不是「猜時區」。**
+       頁面上明寫這兩個欄位是台北時間(見 `announcement_new.html`),
+       所以補位移是把使用者已知的事寫成機器讀得懂的形式。
+       ⚠ 對照 `parse_aware_datetime`:它拒收不帶時區的輸入,因為**API 的呼叫方
+       可能在任何時區,我方無從得知**。兩者不衝突 —— 差別在「有沒有告知」。
+    ⚠ 格式錯的值**原封往下丟**,讓 `parse_aware_datetime` 去回一致的 400
+       —— 在這裡先擋一次會多出一種訊息不同的錯誤。
+    """
+    if not value or not value.strip():
+        return None
+    # 位移由 `FORM_TZ` 算出,不寫死字面 "+08:00" —— 兩個地方寫同一件事的話,
+    # 改了一個而忘記另一個不會有錯誤訊息,只會差幾小時。
+    offset = datetime(2000, 1, 1, tzinfo=FORM_TZ).strftime("%z")   # "+0800"
+    return f"{value.strip()}{offset[:3]}:{offset[3:]}"
+
+
 def build_announcements_router() -> APIRouter:
     """建立公告路由。
 
@@ -130,41 +211,13 @@ def build_announcements_router() -> APIRouter:
            自己按的按鈕沒有作用。
         """
         sub, _roles = identity
-        title = require_text(payload.title, field="title", max_length=TITLE_MAX)
-        body = require_text(payload.body, field="body", max_length=20000)
-        audience = require_choice(payload.audience, field="audience", allowed=AUDIENCES)
-
-        starts_at = (
-            parse_aware_datetime(payload.starts_at, field="starts_at")
-            if payload.starts_at
-            else None
+        # 🔴 與表單走**同一條**驗證+建立路徑(`_validate_and_create`)。
+        #    各寫一份的話兩邊會漂移,而**漂移之後寬的那一邊贏**。
+        announcement_id = _validate_and_create(
+            author_sub=sub, title=payload.title, body=payload.body,
+            audience=payload.audience,
+            starts_at_raw=payload.starts_at, ends_at_raw=payload.ends_at,
         )
-        ends_at = (
-            parse_aware_datetime(payload.ends_at, field="ends_at")
-            if payload.ends_at
-            else None
-        )
-        if starts_at is None:
-            # 沒給就是「現在起生效」。用資料庫預設會讓 starts_at 與比對用的
-            # 「現在」來自兩個不同的時鐘,而差幾毫秒的症狀是**剛發布的公告
-            # 第一次重新整理看不到**。
-            from datetime import datetime, timezone
-
-            starts_at = datetime.now(timezone.utc)
-        if ends_at is not None and ends_at <= starts_at:
-            raise BadRequest("invalid_window", "ends_at 必須晚於 starts_at")
-
-        with session_scope() as session:
-            row = create_announcement(
-                session,
-                author_sub=sub,          # 🔴 來自 token,不是 payload
-                title=title,
-                body=body,
-                starts_at=starts_at,
-                ends_at=ends_at,
-                audience=audience,
-            )
-            announcement_id = str(row.id)
         # log 只記 id、sub、事件類型 —— 🔴 標題與內容**不進 log**(本專案紅線)
         log_event("announcement_published", sub=sub, announcement_id=announcement_id)
         return {"id": announcement_id}
@@ -217,5 +270,156 @@ def build_announcements_router() -> APIRouter:
             read_at = iso_utc(row.read_at)
         log_event("announcement_read", sub=sub, announcement_id=str(aid))
         return {"id": str(aid), "read_at": read_at}
+
+    return router
+
+
+
+# 表單錯誤訊息用的欄位中文標籤。⚠ 只在**表單**這一層換 —— 見 `submit` 的註釋。
+_FIELD_LABELS = {
+    "title": "標題",
+    "body": "內容",
+    "starts_at": "生效時間",
+    "ends_at": "失效時間",
+    "audience": "收件範圍",
+}
+
+
+def _humanize(detail: str) -> str:
+    """把驗證訊息裡的欄位名換成中文標籤。
+
+    參數: detail — 例 `title 不得為空`
+    回傳: 例 `標題 不得為空`
+    副作用: 無
+    ⚠ 只換**開頭**那個欄位名(訊息一律以欄位名開頭),避免把內容裡
+      恰好同名的字一起換掉。
+    """
+    for name, label in _FIELD_LABELS.items():
+        if detail.startswith(name):
+            return label + detail[len(name):]
+    return detail
+
+def build_publish_page_router(*, settings) -> APIRouter:
+    """公告發布頁(T09b):`GET` 表單 + `POST` 送出。
+
+    參數: settings — Settings 快照(取 `base_path`)
+    回傳: APIRouter(呼叫方負責加 `/inbox` 前綴)
+    副作用: 無(只組 router)
+
+    🔴 **與 API 分開成兩個 router 是刻意的:** API 在 `/api/v1` 之下、回 JSON、
+       用 `Idempotency` 之類的機器語彙;這一頁回 HTML、有 CSRF、有可讀的錯誤訊息。
+       混在一起的話「表單的 400」與「API 的 400」會被同一段程式處理,
+       而其中一邊遲早會拿到不適合它的回應形狀。
+
+    🔴 **這是本專案第一個 POST 表單,所以 CSRF 在這裡第一次成為必要。**
+       在此之前所有 POST 都是 JSON API(跨站表單送不出 `application/json`)。
+       `<form>` 一出現,任何網站都能指向我方端點。
+    """
+    router = APIRouter(tags=["announcements-ui"])
+    templates = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
+
+    def _session_key(request: Request) -> str:
+        """取當前 session 的索引鍵(CSRF token 綁在它上面)。
+
+        🔴 直接 `unseal` cookie,**不再呼叫 `resolve_session`** ——
+           能力相依(`require_capability`)已經驗過 session 了,
+           再跑一次會讓 §3.3 的主動續期在同一個請求裡發生兩次。
+        """
+        from app.session import SESSION_COOKIE
+
+        store = request.app.state.session_store
+        key = store.unseal(request.cookies.get(SESSION_COOKIE))
+        if key is None:
+            # 走到這裡表示能力相依過了而 cookie 不見了 —— 不應發生,但不猜
+            raise Forbidden(CAP_PUBLISH_ANNOUNCEMENT)
+        return key
+
+    def _render(request, *, sub: str, form: dict, error: str | None, status: int = 200):
+        """算繪表單。
+
+        🔴 `form` 一律回填使用者剛才填的值。清空表單等於叫他重打一次,
+           而公告內容通常是一段字 —— 那是「錯誤處理把事情弄得更糟」。
+        """
+        return templates.TemplateResponse(
+            request=request,
+            name="announcement_new.html",
+            status_code=status,
+            context={
+                "base_path": settings.base_path,
+                "csrf_token": request.app.state.session_store.csrf_token(_session_key(request)),
+                "form": form,
+                "error": error,
+                # 🔴 顯示本人的 `sub` 而非姓名(§4.2a L1、DI-3 未裁決)
+                "sub": sub,
+            },
+            headers={"Cache-Control": "no-store"},
+        )
+
+    _EMPTY = {"title": "", "body": "", "starts_at": "", "ends_at": ""}
+
+    @router.get("/announcements/new", include_in_schema=False, response_class=HTMLResponse)
+    def new_form(
+        request: Request,
+        identity=Depends(require_capability(CAP_PUBLISH_ANNOUNCEMENT)),
+    ):
+        """發布表單。
+
+        能力: `publish_announcement` —— **`reader` 得到 403,不是 200 空表單**。
+        🔴 回 200 空表單的話,他填完送出才被拒,而白費的那次輸入不會回來。
+        """
+        sub, _roles = identity
+        return _render(request, sub=sub, form=dict(_EMPTY), error=None)
+
+    @router.post("/announcements/new", include_in_schema=False)
+    def submit(
+        request: Request,
+        title: str = Form(""),
+        body: str = Form(""),
+        audience: str = Form(AUDIENCE_ALL),
+        starts_at: str = Form(""),
+        ends_at: str = Form(""),
+        csrf_token: str = Form(""),
+        identity=Depends(require_capability(CAP_PUBLISH_ANNOUNCEMENT)),
+    ):
+        """送出表單。
+
+        回傳: 成功 **303** 導回 `/inbox/`(讓他當場看到自己發的那則)
+        錯誤: CSRF 不符 → **403**;值不合法 → **400 且重新算繪表單**
+        副作用: 成功時 INSERT 一列 `announcement`
+
+        🔴 **CSRF 先驗,而且驗在任何寫入之前。** 順序反過來的話,
+           403 的回應旁邊那則公告已經廣播給全公司了。
+        🔴 為什麼成功是 **303 而不是 200**:POST 之後留在 POST 的結果頁上,
+           使用者按重新整理就會**再發一則**。303 讓瀏覽器改用 GET 重新載入。
+        """
+        sub, _roles = identity
+        store = request.app.state.session_store
+        key = _session_key(request)
+        if not store.verify_csrf(key, csrf_token):
+            # ⚠ 不回「CSRF 不符」的細節給呼叫方 —— 細節只進 log
+            log_event("csrf_rejected", sub=sub, path="announcements/new")
+            raise Forbidden(CAP_PUBLISH_ANNOUNCEMENT)
+
+        filled = {
+            "title": title, "body": body,
+            "starts_at": starts_at, "ends_at": ends_at,
+        }
+        try:
+            announcement_id = _validate_and_create(
+                author_sub=sub, title=title, body=body, audience=audience,
+                starts_at_raw=_form_time_to_iso(starts_at),
+                ends_at_raw=_form_time_to_iso(ends_at),
+            )
+        except BadRequest as exc:
+            # 🔴 具體訊息 + 回填已填的值。「發布失敗」四個字會讓使用者只能亂試。
+            # ⚠ 共用的驗證函式用**欄位名**(`title` / `starts_at`)寫訊息 —— 那是給
+            #   API 呼叫方看的。這一頁的讀者是人,所以在這裡換成欄位的中文標籤;
+            #   不在共用函式裡改,否則 API 的錯誤訊息會變成人話而機器不好比對。
+            return _render(request, sub=sub, form=filled,
+                           error=_humanize(exc.detail), status=400)
+
+        log_event("announcement_published", sub=sub, announcement_id=announcement_id,
+                  via="form")
+        return RedirectResponse(f"{settings.base_path}/", status_code=303)
 
     return router

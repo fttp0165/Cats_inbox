@@ -55,7 +55,14 @@
           <span class="badge text-bg-primary align-middle ms-2">{{ unread }} 未讀</span>
         {% endif %}
       </h1>
-      <a class="btn btn-outline-secondary btn-sm" href="{{ base_path }}/logout">登出</a>
+      <div class="d-flex gap-2">
+        {# 🔴 只有真的有 `publish_announcement` 能力才顯示(T09b)。
+           顯示一個點下去會 403 的連結比不顯示更糟 —— 它讓人以為自己做錯了。 #}
+        {% if can_publish %}
+          <a class="btn btn-warning btn-sm" href="{{ base_path }}/announcements/new">發布公告</a>
+        {% endif %}
+        <a class="btn btn-outline-secondary btn-sm" href="{{ base_path }}/logout">登出</a>
+      </div>
     </header>
 
     {# ── 公告區(T09)────────────────────────────────────────────────

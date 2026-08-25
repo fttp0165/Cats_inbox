@@ -1,0 +1,103 @@
+{# 公告發布頁(T09b)。需 `announcer` 能力。
+
+   🔴 **零 JavaScript。** CSP 是 `default-src 'none'` 且刻意沒有 `script-src`
+      (T10),所以腳本會被**靜默**擋掉。這一頁的所有驗證都在伺服器端,
+      時區也由伺服器補(見下),不靠 JS。
+
+   🔴 **`<style>` 帶逐請求 nonce;`style="…"` 屬性一律不可用**
+      —— nonce 只對**元素**有效,對屬性無效,屬性會被 CSP 擋掉,
+      而症狀是版面走鐘且伺服器零錯誤。要加樣式就加 class 進下面那個區塊。
+
+   🔴 **時間欄位是台北時間(UTC+8),而且這件事必須寫在畫面上。**
+      `<input type="datetime-local">` 送出的值**不帶時區**,而我方 API
+      拒收不帶時區的時間(T09)。後端會替它補上 `+08:00` ——
+      這是**宣告**而非猜測:頁面已經告訴使用者這個欄位是什麼時區。
+      不寫出來的話,填的人以為是別的時區,而差 8 小時**不會有錯誤訊息**。
+
+   ⚠ CSRF 的 hidden input 不可省。後端會驗,而少了它的症狀是
+      **每一次發布都 403**,看起來像權限設定錯了。 #}
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>發布公告 — 站內信</title>
+  <link rel="stylesheet" href="{{ base_path }}/assets/vendor/bootstrap.min.css">
+  <style nonce="{{ request.state.csp_nonce }}">
+    :root { color-scheme: light; }
+    body { background: #f6f7f9; }
+    .page-narrow { max-width: 44rem; }
+    .fs-tiny { font-size: .75rem; }
+    .tz-note { border-left: 4px solid #bf8700; }
+  </style>
+</head>
+<body class="text-body">
+  <main class="container py-4 page-narrow">
+
+    <header class="d-flex align-items-center justify-content-between mb-4">
+      <h1 class="h4 mb-0">發布公告</h1>
+      <a class="btn btn-outline-secondary btn-sm" href="{{ base_path }}/">回收件匣</a>
+    </header>
+
+    {% if error %}
+      {# 具體訊息,不是「發布失敗」四個字 —— 後者讓使用者只能亂試 #}
+      <div class="alert alert-danger" role="alert">{{ error }}</div>
+    {% endif %}
+
+    <form method="post" action="{{ base_path }}/announcements/new">
+      {# 🔴 綁 session 的 CSRF token(HMAC,單向)。缺了它後端一律 403 #}
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+
+      <div class="mb-3">
+        <label class="form-label" for="title">標題</label>
+        {# value 回填:400 之後不讓使用者重打一次 #}
+        <input class="form-control" id="title" name="title" maxlength="255"
+               value="{{ form.title }}" required>
+      </div>
+
+      <div class="mb-3">
+        <label class="form-label" for="body">內容</label>
+        <textarea class="form-control" id="body" name="body" rows="6" required>{{ form.body }}</textarea>
+        <div class="form-text fs-tiny">
+          純文字。輸入的 HTML 不會被當成標籤算繪(本專案紅線:stored XSS 是第一風險)。
+        </div>
+      </div>
+
+      <div class="card tz-note mb-3">
+        <div class="card-body py-2 fs-tiny text-secondary">
+          🔴 下面兩個時間欄位是<strong>台北時間(UTC+8)</strong>。
+          留空 = 立即生效 / 無期限。
+        </div>
+      </div>
+
+      <div class="row">
+        <div class="col-sm-6 mb-3">
+          <label class="form-label" for="starts_at">生效時間(可留空)</label>
+          <input class="form-control" type="datetime-local" id="starts_at"
+                 name="starts_at" value="{{ form.starts_at }}">
+        </div>
+        <div class="col-sm-6 mb-3">
+          <label class="form-label" for="ends_at">失效時間(可留空)</label>
+          <input class="form-control" type="datetime-local" id="ends_at"
+                 name="ends_at" value="{{ form.ends_at }}">
+        </div>
+      </div>
+
+      {# audience 目前只有一個合法值。做成唯讀的說明而不是 <select>:
+         🔴 給一個只有一個選項的下拉選單,會讓人以為未來可以選群組 ——
+         而群組定向需要 `groups` claim,我方 client 刻意沒有申請。 #}
+      <input type="hidden" name="audience" value="all">
+      <div class="form-text fs-tiny mb-3">
+        收件範圍:<strong>全站</strong>。群組定向目前做不到(需契約 §4.2a L2)。
+      </div>
+
+      <button class="btn btn-primary" type="submit">發布</button>
+    </form>
+
+    <footer class="mt-4 text-secondary fs-tiny">
+      {# 與其他頁一致:顯示本人的 sub 而非姓名(§4.2a L1、DI-3 未裁決) #}
+      發布身分:<code>{{ sub }}</code>
+    </footer>
+  </main>
+</body>
+</html>
