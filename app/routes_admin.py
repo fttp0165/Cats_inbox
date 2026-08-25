@@ -20,6 +20,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 
 from app.authz import ALL_ROLES, CAP_MANAGE_ROLES, ROLE_READER, require_capability
+from app.csrf import csrf_token_for, require_csrf
 from app.db import session_scope
 from app.models import AppUser
 from app.oidc import OidcError, log_event
@@ -64,6 +65,10 @@ def build_admin_router(*, settings) -> APIRouter:
                 "all_roles": ALL_ROLES,
                 "base_path": settings.base_path,
                 "auto_grant_reader": settings.auto_grant_reader,
+                # 🔴 T10b:這一頁的兩個表單都要帶 CSRF token。
+                #    後端驗了而模板忘了放,症狀是**那個按鈕從此無效**,
+                #    而它回 403 —— 看起來像權限問題,查錯方向。
+                "csrf_token": csrf_token_for(request),
             },
             headers={"Cache-Control": "no-store"},
         )
@@ -73,6 +78,7 @@ def build_admin_router(*, settings) -> APIRouter:
         sub: str = Form(...),
         role: str = Form(...),
         enabled: str = Form(...),
+        _csrf=Depends(require_csrf),
         identity=Depends(require_capability(CAP_MANAGE_ROLES)),
     ):
         """派/停某人的某個角色。
@@ -84,6 +90,11 @@ def build_admin_router(*, settings) -> APIRouter:
 
         🔴 稽核只記「誰、替誰、什麼角色、開還是關」——**不記姓名**
         (本專案紅線:log 只記 id、sub、事件類型)。
+
+        🔴 **CSRF 由 `Depends(require_csrf)` 在進到這裡之前驗完(T10b)。**
+           在此之前這個表單**沒有 CSRF** —— 它從 T05 就在,而那時本專案
+           還沒有任何 CSRF 機制。攻擊者能誘使已登入的管理員開一個網頁,
+           就**替自己開通任何角色**,而管理員看到的畫面完全正常。
         """
         actor_sub, _roles = identity
         if role not in ALL_ROLES:
@@ -107,6 +118,7 @@ def build_admin_router(*, settings) -> APIRouter:
     @router.post("/users/purge-display-names", include_in_schema=False)
     def purge(
         sub: str = Form(""),
+        _csrf=Depends(require_csrf),
         identity=Depends(require_capability(CAP_MANAGE_ROLES)),
     ):
         """清除 `display_name` 快取(留空=整批)。
@@ -116,6 +128,10 @@ def build_admin_router(*, settings) -> APIRouter:
 
         契約 §4.2a L1 第 7 條要求的清除工具的 UI 入口。
         CLI 版在 `tools/purge_display_names.py`(維運不必登入後台也能清)。
+
+        🔴 **CSRF 由 `Depends(require_csrf)` 驗(T10b)。** 留空 `sub` 就是
+           **整批清除**,所以這個表單被跨站觸發的後果是整欄快取消失 ——
+           而成功時只是一個 303,管理員下一次看清單才會發現。
         """
         actor_sub, _roles = identity
         from app.repo import purge_display_names

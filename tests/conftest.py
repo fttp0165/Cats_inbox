@@ -341,3 +341,56 @@ def models_engine():
             conn.execute(text(f"DROP TABLE IF EXISTS {tbl} CASCADE"))
     yield engine
     engine.dispose()
+
+
+# ─────────────────────────────────────────────────────────────────────
+# 路由列舉(T10b 建立)
+#
+# 🔴 **為什麼需要這一支,而不能直接讀 `app.routes`:**
+#    FastAPI 0.141 把 `include_router()` 進來的東西包成一個 `_IncludedRouter`,
+#    `app.routes` 上**只看得到**自動產生的文件路由(`/inbox/docs`、`/redoc` …)
+#    加上那一個包裝物。也就是說:
+#
+#    ⚠ 任何「列舉 `app.routes` 逐一檢查」的守門,實際上**只檢查到文件頁**。
+#      T10 的 `test_every_html_response_has_csp` 就是這樣 —— 它斷言
+#      「至少檢查到 3 個 HTML 路由」,而**剛好**有 3 個文件頁是 HTML,
+#      於是它一直是綠的,**一個真正的頁面都沒驗到**。
+#      (T06 已記過 `_IncludedRouter` 這件事;這是它的第二個受害者。)
+#
+# 🔴 走法:`_IncludedRouter` 沒有 `.routes`,要走 `.original_router.routes`,
+#    而那底下還有下一層 `_IncludedRouter`,所以要遞迴。
+#    ⚠ **只有最外層那一個包裝物貢獻前綴**(`/inbox`)—— 內層的前綴
+#    (`/api/v1`、`/admin`)在 include 當下就已經寫進葉節點的 `path` 了,
+#    再加一次會變成 `/inbox/api/v1/api/v1/...`。
+#
+# ⚠ 這支函式**依賴 FastAPI 的內部結構**,升版可能失效。防線是:
+#    每個用它的測試都斷言「找到的數量 ≥ N」**且**「每個路徑都打得到」——
+#    結構一變就會紅,而不是靜靜地變成空檢查。
+# ─────────────────────────────────────────────────────────────────────
+def iter_routes(app):
+    """遞迴走出所有真正註冊的路由,並算出**完整**路徑。
+
+    參數: app — FastAPI 實例
+    回傳: 產生 `(full_path, methods, endpoint)`
+    副作用: 無
+    """
+    seen: set[int] = set()
+
+    def walk(routes, prefix: str, depth: int):
+        for route in routes or []:
+            if id(route) in seen:
+                continue
+            seen.add(id(route))
+            path = getattr(route, "path", None)
+            methods = getattr(route, "methods", None)
+            if path and methods:
+                full = path if path.startswith(prefix) else prefix + path
+                yield full, set(methods), getattr(route, "endpoint", None)
+            yield from walk(getattr(route, "routes", None), prefix, depth + 1)
+            inner = getattr(route, "original_router", None)
+            if inner is not None:
+                # 只有最外層貢獻前綴,見上方說明
+                add = getattr(inner, "prefix", "") if depth == 0 else ""
+                yield from walk(inner.routes, prefix + add, depth + 1)
+
+    yield from walk(app.routes, "", 0)

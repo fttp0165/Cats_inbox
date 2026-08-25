@@ -1,8 +1,8 @@
 # cats-inbox TDD 測試計畫表
 
 **建立日期:** 2026-08-15 09:40
-**最後更新:** 2026-08-25 16:20
-**版本:** v1.10
+**最後更新:** 2026-08-25 16:10
+**版本:** v1.11
 
 > 依 `docs/開發計畫書.md` §3 的架構逐元件展開:**每個任務動工前該先寫哪一支會失敗的測試**。
 > 憲法第三條:先寫紅測試釘住預期行為,才改程式;「測試全綠」指**實際跑過看到綠燈**。
@@ -142,6 +142,14 @@ front-channel logout(SLO)         test_auth.py(T06:免認證、冪等、只刪 c
 | T09 | `test_announcements.py::test_active_response_has_no_author_identity` | 回應無 `author_sub`、無姓名(**先寫入 L1 快取再斷言**)| §4.2a L1;不先寫入的話快取為空時必然通過=**假綠**(T08 踩過)|
 | T09 | 🔴 `test_announcements.py::test_inbox_page_shows_active_announcements` | 收件匣頁顯示有效公告、不顯示過期的 | 沒有這條的話**公告上線後沒有任何畫面顯示它**,而每一層都回 200 |
 | T09 | `test_announcements.py::test_every_timestamp_in_api_responses_carries_a_timezone` | 公告**與訊息**的每個 `*_at` 都帶時區位移 | 我方拒收不帶時區的**輸入**,就不能吐出不帶時區的**輸出**。⚠ 在 SQLite 上 `.isoformat()` 是 naive、PG 上帶時區——**本機與正式行為不同** |
+| T10b | 🔴 `test_csrf.py::test_every_form_post_route_requires_csrf` | **列舉**所有收表單的 POST 路由:無 token → 403、**有 token → 不得是 403**、且路徑不得 404 | 逐支列出的話下一個新表單不會被列進去,而漏掉沒有症狀。⚠ 用「身上有全部角色」的人打,否則 403 可能來自沒權限;「有 token 不得 403」擋的是「一律 403」那種讓後台不能用的實作 |
+| T10b | `test_csrf.py::test_csrf_failure_is_a_distinct_error_code` | 錯誤碼是 `csrf_failed`,不是 `forbidden` | 兩者都是 403 而下一步完全不同:重新載入頁面 vs. 找管理員開通 |
+| T10b | `test_csrf.py::test_csrf_failure_is_logged` | 有 `csrf_rejected` 一行,**且表單內容不進 log** | 不留 log 查不出「按了沒反應」的原因;留太多違反個資紅線 |
+| T10b | 🔴 `test_csrf.py::test_role_change_without_csrf_has_no_effect` | 無 token 的派角色 → 403 **且角色沒被改** | 這個表單能讓人**替自己開通任何角色**。只驗狀態碼的話「先寫再回 403」照樣綠 |
+| T10b | 🔴 `test_csrf.py::test_purge_without_csrf_has_no_effect` | 無 token 的清除 → 403 **且快取還在** | 留空 `sub` 就是**整批清除**,成功時只是一個 303 |
+| T10b | `test_csrf.py::test_role_change_with_csrf_works` | 帶 token 的派角色**真的生效**(303 + 角色開了) | 沒有這條的話「一律 403」會讓上面每一支都綠而後台不能用 |
+| T10b | 🔴 `test_csrf.py::test_admin_page_has_csrf_in_every_form` | 每個 `<form>` 都有 hidden input,**且值是 64 字元 HMAC** | ⚠ 只驗欄位名在不在是不夠的:把 token 改成空字串仍然綠,而那會讓**每次送出都 403** |
+| T10b | 🔴 `test_security.py::test_every_html_response_has_csp`(**改寫**) | 改走 `iter_routes()`;每支之前**重新登入**;斷言 `/inbox/`、`/inbox/pending`、`/inbox/logged-out/` 都在列舉結果裡 | 🔴 **原版只驗到自動產生的文件頁**:`app.routes` 看不到 `_IncludedRouter` 底下的路由,而「至少 3 個」剛好被 3 個文件頁滿足。⚠ 且列舉會打到 `/inbox/logout`,它**清掉 session**,後面的頁面被靜靜跳過 |
 | T09b | 🔴 `test_publish_form.py::test_post_without_csrf_is_403_and_writes_nothing` | 缺 CSRF token → **403 且零列寫入** | 本專案第一個 POST 表單。CSRF 成功時**沒有錯誤訊息** —— 受害者只會看到一則自己沒發過的公告 |
 | T09b | 🔴 `test_publish_form.py::test_csrf_token_of_another_session_is_rejected` | 別的 session 的 token 不得通行 | 擋「token 只驗簽章、不綁 session」:攻擊者在自己 session 拿一個合法 token 就能打受害者,而它通過所有「有 token 就放行」的測試 |
 | T09b | 🔴 `test_publish_form.py::test_csrf_token_is_not_the_session_key_in_disguise` | token 不得含 session key;且必須是**純** 64 字元 HMAC 十六進位 | 用簽章(非 HMAC)做 token 會把 session key **明文帶到 HTML 上**。⚠ 第一版斷言拿 `cookie.split(".")[0]` 當 key,而**那是 key 的 base64** —— 突變逃掉了 |
@@ -213,10 +221,11 @@ front-channel logout(SLO)         test_auth.py(T06:免認證、冪等、只刪 c
 | **公告層 21 項(T09)** | ✅ 已跑、全綠(2026-08-25);含邊界注入時鐘與「輸出時間必帶時區」|
 | **安全層 41 項(T10)** | ✅ 已跑、全綠(2026-08-25);含 20 個 `action_url` 參數化案例、1 支 AST 源碼檢查、CSP 的路由列舉守門 |
 | **發布表單層 17 項(T09b)** | ✅ 已跑、全綠(2026-08-25);含 CSRF 三態、時區的實際 UTC 值斷言 |
+| **CSRF 層 7 項(T10b)** | ✅ 已跑、全綠(2026-08-25);**列舉式守門**,新表單自動被涵蓋 |
 | **schema 層 10 項(T07)** | ✅ 已在**真的 PostgreSQL 16.13** 上跑過;含 model↔migration 的 schema 比對 |
 | **migration 層 3 項(T05)** | ✅ 已在**真的 PostgreSQL 16.13** 上跑過。🔴 **PG15 未演練**(本機無 PG15、無 docker daemon)——留 T11 於 VM 補;⚠ 無 PG 時本組 **skip**,`run_all.sh` 會把 skip 數量印出來 |
 | M4–M6 測試 | ⬜ **尚未撰寫**(規格見 §3;不得視為已覆蓋)。⚠ T14 的規格已於 2026-08-18 由 portal 核定,五支測試的斷言已具體化 |
-| T10b / T11 / T12 / T14–T17 測試 | ⬜ 尚未撰寫(規格見 §3)|
+| T11 / T12 / T14–T17 測試 | ⬜ 尚未撰寫(規格見 §3)|
 | 真 IdP / gateway 冒煙 | ⬜ **尚未執行**(client 已核發,但 secret 尚未進本服務;需 T11 路由。CI 跑不動) |
 | `docker compose config` 解析 | ✅ 已於本機驗過(Compose v5.1.1);**容器實際啟動尚未驗**(本環境無 docker daemon) |
 
@@ -446,12 +455,33 @@ JSON 欄位就是那個面。已補兩條:①API 回應不得出現快取的姓�
 §5.7 / §5.8 / §5.9 那三次抓到的都是**量測工具**的問題
 (sed 沒配到、sed 改錯語意、選擇器選不到測試)。兩類都要防。
 
+
+### 5.11 突變檢查(T10b,2026-08-25)
+
+**13 項全被抓到**(修掉一個測試洞之後)。四項值得記:
+
+| 故意改壞 | 對應測試 | 結果 |
+|---|---|---|
+| `require_csrf` **一律拒絕**(後台完全不能用) | `test_every_form_post_route_requires_csrf` | ✅ 紅 |
+| `iter_routes` 退回只讀 `app.routes` | `test_every_html_response_has_csp` | ✅ 紅 |
+| CSP 守門**不重新登入** | `test_every_html_response_has_csp` | ✅ 紅 |
+| 後台頁不傳 token 給模板(值變空字串) | `test_admin_page_has_csrf_in_every_form` | ⚠ **第一次未被抓到** → 補「值必須是 64 字元 HMAC」後 ✅ 紅 |
+
+🔴 **最後那一項是測試洞:只驗「欄位名在不在」而不驗值。**
+把傳給模板的 token 改成空字串之後,`name="csrf_token"` 仍然在頁面上,
+而**每一次送出都會 403、後台完全不能用** —— 而測試是綠的。
+
+⚠ 這是連續第二輪抓到**測試本身**的邏輯錯誤(§5.10 抓到三個)。
+兩輪的共同形狀:**斷言的粒度比它宣稱保護的性質粗**
+——「欄位名在不在」比「token 有效」粗,「整頁有沒有那個詞」比「錯誤框裡寫了什麼」粗。
+
 ---
 
 ## 版本歷史
 
 | 版本 | 日期 | 修改人 | 摘要 |
 |---|---|---|---|
+| v1.11 | 2026-08-25 | Benny | **T10b 完工回寫**:§3 新增 T10b 的 **8 列**(含**改寫**後的 `test_every_html_response_has_csp`);§5 覆蓋現況加 **CSRF 層 7 項**;新增 §5.11 突變檢查 **13/13**。🔴 **記下一個既有守門的洞**:T10 的「列舉所有 HTML 路由」實際上**只驗到自動產生的文件頁**——`app.routes` 看不到 `_IncludedRouter` 底下的路由,而「至少 3 個」剛好被 3 個文件頁滿足;已改走新的 `iter_routes()` 並補「三個真頁面必須在列舉結果裡」。⚠ 且列舉會打到 `/inbox/logout`,它**清掉 session**,後面的頁面被靜靜跳過 ——改成每支之前重新登入。⚠ §5.11 記下連續第二輪抓到**測試本身**的邏輯錯誤,兩輪的共同形狀是**斷言的粒度比它宣稱保護的性質粗** |
 | v1.10 | 2026-08-25 | Benny | **T09b 完工回寫**:§3 新增 T09b 的 **8 列**(CSRF 三態、時區的實際 UTC 值、五種 400 的「錯誤框內 + 保留輸入」、入口連結雙向、303、CSP 乾淨);§5 覆蓋現況加**發布表單層 17 項**;新增 §5.10 突變檢查 **19/19**。🔴 §5.10 記下**三個測試洞**,共同形狀是**斷言的對象裡本來就含有我要找的字串**——三者都讓測試看起來嚴格而**永遠通過**,而只跑一次是綠的不會有任何線索。⚠ 這是突變檢查第一次抓到**測試本身**的邏輯錯誤;前三次(§5.7–5.9)抓到的都是**量測工具**的問題。兩類都要防 |
 | v1.9 | 2026-08-25 | Benny | **T10 完工回寫**:§3 的 T10 由 3 列擴為 **15 列**(原本只寫了跳脫、四則反例、log 三條,而檔名還寫成 `test_messages.py`);反例由 4 則擴為 **14 則**;§5 覆蓋現況加**安全層 41 項**;新增 §5.9 突變檢查 **19/19**。🔴 兩條原規格裡沒有、而壞掉不會有錯誤訊息的:①**輸出側也要擋**(寫入側白名單是 T10 才加的,之前寫進去的列全都繞過了它),②**算繪後不得有行內樣式屬性** —— nonce 只對元素有效,`style-src 'nonce-…'` 會把 `style="…"` 屬性整批擋掉,**「`<style>` 帶了 nonce」不等於「樣式會生效」**。🔴 §5.9 記下量測工具第三次出問題,且這次會產生**假 ✅**:`-k` 打錯時 pytest 回 rc=5/4 也是非零,而腳本把非零一律讀成「抓到」 |
 | v1.8 | 2026-08-25 | Benny | **T09 完工回寫**:§3 的 T09 由 2 列擴為 **11 列**(原本只寫了「非 announcer 403」與「過期不出現」兩條,而檔名還寫成 `test_messages.py`);§5 覆蓋現況加**公告層 21 項**;新增 §5.8 突變檢查 **17/17**。🔴 兩條在原規格裡不存在、而壞掉不會有錯誤訊息的:①**未來的公告也不得出現**(只驗 `ends_at` 是最容易漏的一半),②**甲讀過不得讓乙變已讀**——而該項的突變結果更值得記:把 `user_sub` 從 JOIN 的 ON 搬到 WHERE,症狀不是「已讀錯了」而是**別人一讀那則公告就從我的清單裡消失**,而消失的東西沒有人會回報。⚠ 第一輪有 1 項顯示未抓到,查為 **sed 沒真的改到語意**(加了恆真項而條件還在)——與 T06 的「拿掉 no-store」同一種誤判;腳本已加「突變沒套用就明講」的偵測 |

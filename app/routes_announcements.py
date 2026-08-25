@@ -36,9 +36,9 @@ from pydantic import BaseModel, ConfigDict
 from app.authz import (
     CAP_PUBLISH_ANNOUNCEMENT,
     CAP_READ_OWN,
-    Forbidden,
     require_capability,
 )
+from app.csrf import csrf_token_for, require_csrf
 from app.db import session_scope
 from app.models import AUDIENCE_ALL, AUDIENCES
 from app.oidc import log_event
@@ -318,22 +318,6 @@ def build_publish_page_router(*, settings) -> APIRouter:
     router = APIRouter(tags=["announcements-ui"])
     templates = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
 
-    def _session_key(request: Request) -> str:
-        """取當前 session 的索引鍵(CSRF token 綁在它上面)。
-
-        🔴 直接 `unseal` cookie,**不再呼叫 `resolve_session`** ——
-           能力相依(`require_capability`)已經驗過 session 了,
-           再跑一次會讓 §3.3 的主動續期在同一個請求裡發生兩次。
-        """
-        from app.session import SESSION_COOKIE
-
-        store = request.app.state.session_store
-        key = store.unseal(request.cookies.get(SESSION_COOKIE))
-        if key is None:
-            # 走到這裡表示能力相依過了而 cookie 不見了 —— 不應發生,但不猜
-            raise Forbidden(CAP_PUBLISH_ANNOUNCEMENT)
-        return key
-
     def _render(request, *, sub: str, form: dict, error: str | None, status: int = 200):
         """算繪表單。
 
@@ -346,7 +330,8 @@ def build_publish_page_router(*, settings) -> APIRouter:
             status_code=status,
             context={
                 "base_path": settings.base_path,
-                "csrf_token": request.app.state.session_store.csrf_token(_session_key(request)),
+                # T10b:改用共用的 `csrf_token_for`(與後台同一條路)
+                "csrf_token": csrf_token_for(request),
                 "form": form,
                 "error": error,
                 # 🔴 顯示本人的 `sub` 而非姓名(§4.2a L1、DI-3 未裁決)
@@ -378,7 +363,7 @@ def build_publish_page_router(*, settings) -> APIRouter:
         audience: str = Form(AUDIENCE_ALL),
         starts_at: str = Form(""),
         ends_at: str = Form(""),
-        csrf_token: str = Form(""),
+        _csrf=Depends(require_csrf),
         identity=Depends(require_capability(CAP_PUBLISH_ANNOUNCEMENT)),
     ):
         """送出表單。
@@ -393,13 +378,9 @@ def build_publish_page_router(*, settings) -> APIRouter:
            使用者按重新整理就會**再發一則**。303 讓瀏覽器改用 GET 重新載入。
         """
         sub, _roles = identity
-        store = request.app.state.session_store
-        key = _session_key(request)
-        if not store.verify_csrf(key, csrf_token):
-            # ⚠ 不回「CSRF 不符」的細節給呼叫方 —— 細節只進 log
-            log_event("csrf_rejected", sub=sub, path="announcements/new")
-            raise Forbidden(CAP_PUBLISH_ANNOUNCEMENT)
-
+        # 🔴 CSRF 由 `Depends(require_csrf)` 在**進到這裡之前**驗完(T10b)。
+        #    原本寫在這裡的手動比對已移除 —— 手寫的版本只保護了「有人想到的」
+        #    那個表單,而角色後台那兩個從 T05 就沒有(見 T10b dev-log)。
         filled = {
             "title": title, "body": body,
             "starts_at": starts_at, "ends_at": ends_at,

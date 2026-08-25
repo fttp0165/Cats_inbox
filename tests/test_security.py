@@ -368,20 +368,38 @@ def test_every_html_response_has_csp(app_client):
     會忘記,而忘記不會有任何症狀 —— 所以 CSP 由 middleware 統一加,
     而這支測試證明「統一」是真的。
     """
+    from tests.conftest import iter_routes
+
     http, transport = app_client
     _login(http, transport)
-    checked = 0
-    for route in http.app.routes:
-        path = getattr(route, "path", "")
-        methods = getattr(route, "methods", set()) or set()
+
+    checked = []
+    for path, methods, _endpoint in iter_routes(http.app):
         if "GET" not in methods or "{" in path or "/assets" in path:
             continue
+        # 🔴 **每一支之前都重新登入。** 列舉會打到 `/inbox/logout` 與
+        #    front-channel logout —— 它們**會把 session 清掉**,而排在它們後面
+        #    的頁面就變成 401(不是 HTML),於是被這支測試靜靜地跳過。
+        #    ⚠ 第一版就踩到:`/inbox/` 與 `/inbox/pending` 因為排在 logout
+        #    之後而完全沒被驗到,**而測試是綠的**。
+        #    重新登入比維護一份「哪些路由有破壞性」的清單可靠 ——
+        #    清單會忘記跟著新路由長。
+        _login(http, transport)
         r = http.get(path, follow_redirects=False)
         if "text/html" not in r.headers.get("content-type", ""):
             continue
-        checked += 1
+        checked.append(path)
         assert r.headers.get("content-security-policy"), f"🔴 {path} 沒有 CSP"
-    assert checked >= 3, f"應該至少檢查到 3 個 HTML 路由,實際 {checked}"
+
+    # 🔴 **這幾行是 T10b 補的,而它們補的是一個「守門看起來在運作」的洞。**
+    #    原本這支測試走 `app.routes`,而 FastAPI 0.141 在那上面**只放得下**
+    #    自動產生的文件路由 —— 它斷言「至少 3 個」而剛好有 3 個文件頁是 HTML,
+    #    所以一直全綠,**一個真正的頁面都沒驗到**。
+    #    改走 `iter_routes` 之後,還必須斷言「真正的頁面在裡面」,
+    #    否則同樣的空過會再發生一次。
+    assert len(checked) >= 4, f"只檢查到 {len(checked)} 個 HTML 路由:{checked}"
+    for must in ("/inbox/", "/inbox/pending", "/inbox/logged-out/"):
+        assert must in checked, f"🔴 {must} 沒有被列舉到:{checked}"
 
 
 @pytest.mark.parametrize("path", HTML_PAGES)

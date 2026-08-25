@@ -1,6 +1,11 @@
 {# 角色後台(T05)。零外部資源、light 寫死。
    🔴 這是唯一顯示 display_name 的地方(契約 §4.2a L1:僅供管理後台顯示),
-      且必須顯示**資料時間**——過期不隱藏而是標示(L1 第 3 條)。#}
+      且必須顯示**資料時間**——過期不隱藏而是標示(L1 第 3 條)。
+   🔴 **每一個 `<form>` 都必須帶 `csrf_token` 的 hidden input**(T10b)。
+      後端由 `Depends(require_csrf)` 驗;模板忘了放的症狀是
+      **那個按鈕從此無效**,而它回 403 —— 看起來像權限問題,會查錯方向。
+      守門:`tests/test_csrf.py::test_admin_page_has_csrf_in_every_form`
+      (它抓出頁面上每一個 `<form>` 逐一檢查,新表單自動被涵蓋)。 #}
 <!doctype html>
 <html lang="zh-Hant">
 <head>
@@ -49,6 +54,7 @@
       <td>
         {% set on = row.roles.get(r, False) %}
         <form class="inline" method="post" action="{{ base_path }}/admin/users/roles">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
           <input type="hidden" name="sub" value="{{ row.sub }}">
           <input type="hidden" name="role" value="{{ r }}">
           <input type="hidden" name="enabled" value="{{ '0' if on else '1' }}">
@@ -61,6 +67,7 @@
     {% endfor %}
   </table>
   <form class="mt-4" method="post" action="{{ base_path }}/admin/users/purge-display-names">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
     <input type="text" name="sub" placeholder="sub(留空=整批)" size="40">
     <button type="submit">清除顯示名稱快取</button>
   </form>
