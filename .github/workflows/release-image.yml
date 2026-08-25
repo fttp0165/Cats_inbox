@@ -1,0 +1,136 @@
+# 發版映像建置與推送(T10c)
+#
+# 🔴 這個 workflow 補的是一個「所有文件都假設它已經存在」的東西:
+#    `docker-compose.yml` 引用 `ghcr.io/fttp0165/cats-inbox-api:<版本>`,
+#    而在 T10c 之前**沒有任何東西建它**。每份文件都對、每個任務也都完成了,
+#    而把它們接起來的那一步不在任何人的清單上。
+#    症狀會在 T11 的低峰窗口當場出現(`manifest unknown`),
+#    而那是最不該發現這件事的時刻 —— 全 VM 唯一的 gateway 正在等著 reload。
+#
+# 🔴 **只在推 tag 時跑。** 每次 push 都建的話,Actions 額度會被 Docker 建置吃掉
+#    —— portal 的 CI 正因額度用盡而紅了一週(2026-08-24 查明),
+#    而那種故障的症狀是「發版當下才發現建不出來」。
+#    ⚠ 仍保留 `workflow_dispatch`:tag 推了而建置失敗時要能補建,
+#    否則只能再發一個 patch 版(第八條5:同一個 tag 不重發)。
+#
+# 🔴 **絕不推 `latest`**(平台紅線)。`latest` 讓「同一個 tag 在不同時間指向
+#    不同東西」,而回滾時你不知道要回到哪裡。
+name: release-image
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+# 🔴 明確給權限,不沿用 repo 預設(可能是全寫)。推映像只需要這兩個。
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build-push:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      # ── 三道一致性檢查:不一致就讓 workflow 失敗,不是印一行訊息 ──────
+      - name: 驗版本一致性(常數 / compose / git tag)
+        id: version
+        run: |
+          set -euo pipefail
+
+          # 🔴 版本號的單一來源是 `app/__init__.py`(第八條4)。
+          #    這裡用 sed 讀而不 import —— import 需要裝依賴,而這一步
+          #    要在裝任何東西之前就能擋下錯的版本。
+          VERSION=$(sed -n 's/^__version__ = "\(.*\)"$/\1/p' app/__init__.py)
+          if [ -z "$VERSION" ]; then
+            echo "::error::讀不到 app/__init__.py 的 __version__"
+            exit 1
+          fi
+
+          # ① compose 引用的 tag 必須等於常數。
+          #    🔴 這是最安靜的那種錯:改了常數而忘了 compose,部署的是**舊映像**,
+          #    而它的 health 回報**舊版本** —— 兩者「看起來完全一致」,
+          #    而你以為換版成功了。
+          COMPOSE_TAG=$(sed -n 's|^ *image: ghcr.io/fttp0165/cats-inbox-api:\(.*\)$|\1|p' docker-compose.yml)
+          if [ "$COMPOSE_TAG" != "$VERSION" ]; then
+            echo "::error::docker-compose.yml 的映像 tag 是 $COMPOSE_TAG,而 __version__ 是 $VERSION"
+            exit 1
+          fi
+
+          # ② 由 tag 觸發時,tag 去掉 v 之後必須等於常數(第八條4)。
+          #    版本號會顯示給使用者(/inbox/health、頁尾)——不一致等於說謊。
+          if [ "${GITHUB_REF_TYPE:-}" = "tag" ]; then
+            TAG_VERSION="${GITHUB_REF_NAME#v}"
+            if [ "$TAG_VERSION" != "$VERSION" ]; then
+              echo "::error::git tag 是 ${GITHUB_REF_NAME}($TAG_VERSION),而 __version__ 是 $VERSION"
+              exit 1
+            fi
+          else
+            echo "::notice::手動觸發:略過 tag 比對,仍以 __version__=$VERSION 為映像 tag"
+          fi
+
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "::notice::將建置 ghcr.io/fttp0165/cats-inbox-api:$VERSION"
+
+      - uses: docker/setup-buildx-action@v3
+
+      # ── 先建到本機、跑起來驗一次,才推上去 ────────────────────────────
+      # 🔴 「建得起來」與「跑得起來」是兩件事。少了這一步,壞掉的映像會被推到
+      #    registry,而發現的時機是 VM 上 `docker compose up -d` 之後 ——
+      #    也就是低峰窗口裡。
+      - name: 建置(先不推)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          load: true
+          push: false
+          tags: ghcr.io/fttp0165/cats-inbox-api:${{ steps.version.outputs.version }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: 冒煙:容器跑得起來,且 health 回報的版本正確
+        run: |
+          set -euo pipefail
+          VERSION="${{ steps.version.outputs.version }}"
+          # 🔴 刻意**不給任何 OIDC 設定**:健康檢查不查 DB、也不需要 IdP,
+          #    所以它必須在「什麼都還沒設定」的狀態下就是 200(T01 的回滾閥門)。
+          docker run -d --name smoke -p 18080:8080 \
+            "ghcr.io/fttp0165/cats-inbox-api:$VERSION"
+          for i in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:18080/inbox/health >/tmp/health.json 2>/dev/null; then
+              break
+            fi
+            sleep 1
+          done
+          cat /tmp/health.json
+          # 映像裡烘進去的版本必須等於我們要推的 tag
+          GOT=$(python3 -c "import json;print(json.load(open('/tmp/health.json'))['version'])")
+          if [ "$GOT" != "$VERSION" ]; then
+            echo "::error::映像回報的版本是 $GOT,而要推的 tag 是 $VERSION"
+            docker logs smoke || true
+            exit 1
+          fi
+          # non-root:平台紅線,而它只在真的跑起來時才驗得到
+          WHO=$(docker exec smoke id -u)
+          if [ "$WHO" = "0" ]; then
+            echo "::error::容器以 root 執行(應為 UID 1000)"
+            exit 1
+          fi
+          docker rm -f smoke
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # 同一份 context + 同樣的 cache,所以這一步幾乎是直接推
+      - name: 推送
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: ghcr.io/fttp0165/cats-inbox-api:${{ steps.version.outputs.version }}
+          cache-from: type=gha

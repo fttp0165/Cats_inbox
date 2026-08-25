@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>cats-inbox 發版 SOP</title>
+<style>
+:root { color-scheme: light; }
+body { background:#ffffff; color:#1f2328; margin:0 auto; padding:2rem 1.2rem 4rem;
+       max-width:60rem; line-height:1.65;
+       font-family:-apple-system,"Segoe UI","Noto Sans TC","Microsoft JhengHei",
+                   "PingFang TC",sans-serif; }
+h1 { font-size:1.7rem; border-bottom:2px solid #d0d7de; padding-bottom:.4rem; }
+h2 { font-size:1.35rem; border-bottom:1px solid #d8dee4; padding-bottom:.3rem; margin-top:2.2rem; }
+h3 { font-size:1.12rem; margin-top:1.8rem; }
+h4 { font-size:1rem; margin-top:1.4rem; }
+p, li { overflow-wrap:break-word; }
+a { color:#0b57d0; }
+code { background:#f6f8fa; border:1px solid #e4e8ec; border-radius:4px;
+       padding:.08em .35em; font-size:.92em;
+       font-family:ui-monospace,SFMono-Regular,Consolas,"Noto Sans Mono CJK TC",monospace; }
+pre { background:#f6f8fa; border:1px solid #e4e8ec; border-radius:6px;
+      padding: .8rem 1rem; overflow-x:auto; line-height:1.5; }
+pre code { background:none; border:none; padding:0; }
+blockquote { margin:1rem 0; padding:.5rem 1rem; border-left:4px solid #c9d1d9;
+             background:#f8f9fb; color:#4b535d; }
+blockquote p { margin:.35rem 0; }
+.tablewrap { overflow-x:auto; margin:1rem 0; }
+table { border-collapse:collapse; font-size:.95em; min-width:50%; }
+th, td { border:1px solid #d0d7de; padding:.4rem .65rem; text-align:left; vertical-align:top; }
+th { background:#f6f8fa; }
+tr:nth-child(even) td { background:#fbfcfd; }
+hr { border:none; border-top:1px solid #d0d7de; margin:2rem 0; }
+figure.svg { margin:1.2rem 0; text-align:center; }
+figure.svg svg { max-width:100%; height:auto; }
+</style>
+</head>
+<body>
+<h1>cats-inbox 發版 SOP</h1>
+<p><strong>建立日期:</strong> 2026-08-25 17:05<br><strong>最後更新:</strong> 2026-08-25 17:05<br><strong>版本:</strong> v1.0<br><strong>適用範圍:</strong> cats-inbox 的每一次發版(打 tag → 建映像 → VM 換版)<br><strong>權威依據:</strong> 憲法<strong>第八條</strong>(發版儀式)+ 平台紅線(不用 <code>latest</code>、不在正式機建置)</p>
+<blockquote><p>本文把第八條變成一份<strong>照著做就會對</strong>的清單。<br>🔴 憲法寫了「content 必含四段」,而在本文之前沒有任何清單把它變成步驟<br>—— 那條規則就只在有人記得的時候生效。</p></blockquote>
+<hr>
+<h2>0. 現在還沒真的跑過哪些步驟(先講清楚)</h2>
+<p>🔴 <strong>共通紅線:未實際跑過的不得宣稱通過。</strong> 本 SOP 寫在 T10c,而當時:</p>
+<div class="tablewrap"><table><thead><tr><th>步驟</th><th>狀態</th></tr></thead><tbody><tr><td><code>release-image.yml</code> 的三道一致性檢查</td><td>⏳ <strong>尚未</strong>在真的 Actions 上跑過(本地無 docker daemon、無 GHCR 憑證)</td></tr><tr><td>映像推上 GHCR</td><td>⏳ <strong>尚未</strong>推過任何一版 —— <code>ghcr.io/fttp0165/cats-inbox-api:0.1.0</code> <strong>目前不存在</strong></td></tr><tr><td>VM 上 <code>docker compose up -d</code></td><td>⏳ <strong>尚未</strong>(<code>/opt/cats-inbox</code> 尚不存在,T11)</td></tr><tr><td>gateway 路由與 reload</td><td>⏳ <strong>尚未</strong>(路由權威在 portal,T11 提 PR)</td></tr></tbody></table></div>
+<p>⚠ 也就是說:<strong>第一次發版就是這份 SOP 的第一次演練</strong>。第 1 步因此是「確認額度」,<br>而不是「打 tag」。</p>
+<hr>
+<h2>1. 發版前(在<strong>開發者本機</strong>)</h2>
+<p>【開發者本機】【repo 根,分支 <code>main</code>(或要發版的那條)】【cats-inbox】</p>
+<pre><code># ① 確認 Actions 額度還夠 —— portal 的 CI 曾因額度用盡紅了一週(2026-08-24),
+#    而那種故障的症狀是「發版當下才發現建不出來」。
+#    在 GitHub UI:Settings → Billing → Actions 看剩餘分鐘數。
+
+# ② 版本號常數改成要發的版(🔴 第八條4:必須在打 tag 之前改)
+#    版本號會顯示給使用者(/inbox/health、頁尾),tag 與常數不一致等於說謊。
+$EDITOR app/__init__.py          # __version__ = "0.2.0"
+$EDITOR docker-compose.yml       # image: ghcr.io/fttp0165/cats-inbox-api:0.2.0
+
+# ③ 全部測試跑過(🔴 含 migration 那 13 項 —— 要起本機 PG,
+#    否則它們是 skipped 而不是 passed,而兩者在輸出上長得很像)
+eval "$(bash tests/pg_local.sh start)"
+bash tests/run_all.sh
+
+# ④ 有 migration 的版本:本機 up → down → up 演練(第八條6)
+#    沒有新 migration 的版本跳過這一步。</code></pre>
+<p>🔴 <strong>②的兩個檔案必須一起改。</strong> 只改常數而忘了 compose 的後果是<br><strong>部署的是舊映像</strong>,而它的 health 回報<strong>舊版本</strong> —— 兩者「看起來完全一致」,<br>而你以為換版成功了。守門是 <code>tests/test_release.py::test_compose_image_tag_matches_version_constant</code><br>與 workflow 裡的第①道檢查(它會讓建置直接失敗)。</p>
+<hr>
+<h2>2. 打 tag(在<strong>開發者本機</strong>或 <strong>GitHub UI</strong>)</h2>
+<p>【開發者本機】【repo 根,分支 <code>main</code>】【cats-inbox】</p>
+<pre><code>git tag -a v0.2.0 -m "v0.2.0"
+git push origin v0.2.0</code></pre>
+<p>推上去之後 <code>release-image.yml</code> 會自動:</p>
+<ol><li>驗 <strong>git tag == <code>__version__</code> == compose 的 tag</strong>(任一不符即失敗);</li><li>建映像、<strong>先跑起來</strong>驗 <code>/inbox/health</code> 回報的版本與 non-root;</li><li>推 <code>ghcr.io/fttp0165/cats-inbox-api:0.2.0</code>。</li></ol>
+<p>🔴 <strong>不會推 <code>latest</code>。</strong> <code>latest</code> 讓同一個 tag 在不同時間指向不同東西,<br>回滾時你不知道要回到哪裡。<br>⚠ 建置失敗時<strong>不要重推同一個 tag</strong>(第八條5)——修好之後用<br><code>workflow_dispatch</code> 手動補建,或發下一個 patch 版。</p>
+<hr>
+<h2>3. 寫 Release(在 <strong>GitHub UI</strong>)</h2>
+<p><strong>title 格式:</strong> <code>vX.Y.Z — 一句話重點</code></p>
+<p><strong>content 必含四段,缺一不可</strong>(第八條3):</p>
+<pre><code>## 本版內容
+- T09:公告(發布 / 有效期 / active / 逐人已讀)
+- T10:安全紅線落地(跳脫 / action_url 白名單 / 嚴格 CSP)
+
+## 對現有資料的影響
+🟢 不動 / 🟡 加欄位 / 🔴 UPDATE 或刪除 —— 挑一個,並明講**有無 migration**。
+例:🟡 加欄位;有 migration `0003_xxx`,已在本機 up→down→up 演練過。
+
+## 部署注意
+- `.env` 是否新增變數(新增了就列出變數名,**不列值**)
+- 是否需跑 migration(要跑就寫指令)
+- 換版後的驗證點(例:`curl -skI https://catsapp.sporton.com.tw/inbox/health` 回 200
+  且 `version` 等於本版)
+
+## 測試
+本版測試總數、CI 綠燈狀態。
+🔴 未實際跑過的不得寫成通過;skipped 要如實寫成 skipped。</code></pre>
+<p>🔴 <strong>Release 頁是使用者與未來的自己唯一會看的「這一版是什麼」</strong> —— tag 本身<br>說不出任何事。</p>
+<hr>
+<h2>4. VM 換版(在 <strong>CATS VM</strong>)</h2>
+<p>⚠ <strong>這一節在 T11 完成前都用不到</strong>(<code>/opt/cats-inbox</code> 尚不存在)。</p>
+<p>【CATS VM(Ubuntu)】【<code>/opt/cats-inbox</code>】【cats-inbox】</p>
+<pre><code># ① 改 tag 後 pull —— 🔴 不在正式機 `git pull &amp;&amp; build`(平台紅線)
+sudo sed -i 's|cats-inbox-api:.*|cats-inbox-api:0.2.0|' docker-compose.yml
+sudo docker compose pull
+sudo docker compose up -d
+
+# ② 驗證(換版後的驗證點,對照 Release 的「部署注意」)
+curl -s http://127.0.0.1:8080/inbox/health   # 容器內部;version 應為 0.2.0</code></pre>
+<p>🔴 <strong>接著這一行動的是 portal 擁有的 gateway,不是本服務</strong>:</p>
+<p>【CATS VM(Ubuntu)】【<code>/opt/cats-portal</code>】【<strong>cats-portal</strong>】</p>
+<pre><code>sudo docker exec portal-gateway nginx -s reload</code></pre>
+<p>⚠ 本專案最容易貼錯的一組就是這兩段 —— 上面在 <code>/opt/cats-inbox</code>,<br>下面在 <strong>portal 的</strong>目錄、動的是綁 80/443 的<strong>全 VM 唯一入口</strong>。<br><strong>貼錯的代價是動到正式站,而錯誤不會當場顯現</strong>(憲法第九條11)。</p>
+<hr>
+<h2>5. 發版前一分鐘檢查(第八條6)</h2>
+<div class="tablewrap"><table><thead><tr><th>#</th><th>檢查</th><th>不做的後果</th></tr></thead><tbody><tr><td>1</td><td><code>__version__</code> 與 compose 的 tag 都改成本版了</td><td>部署舊映像而 health 回報舊版本,<strong>看起來完全一致</strong></td></tr><tr><td>2</td><td>測試全綠,且 migration 那 13 項<strong>不是 skipped</strong></td><td>「93 passed」與「全部跑過」在輸出上長得一樣</td></tr><tr><td>3</td><td>有 migration 的版本已本機 up→down→up</td><td>回滾時才發現 downgrade 是空的</td></tr><tr><td>4</td><td>Release 四段都寫了,且未跑過的如實標未跑過</td><td>讀的人拿它當現況,而它看起來很完整</td></tr><tr><td>5</td><td>Actions 額度還夠</td><td>打了 tag 才發現建不出來,而 tag 不能重發</td></tr></tbody></table></div>
+<hr>
+<h2>版本歷史</h2>
+<div class="tablewrap"><table><thead><tr><th>版本</th><th>日期</th><th>修改人</th><th>摘要</th></tr></thead><tbody><tr><td>v1.0</td><td>2026-08-25</td><td>Benny</td><td>初版(T10c)。把憲法第八條變成可照做的五節:發版前(改<strong>兩個</strong>檔案的版本號、跑含 PG 的全測試、migration 雙向演練)、打 tag(workflow 自動驗三道一致性)、寫 Release(四段模板逐段給例)、VM 換版(🔴 兩段指令分屬<strong>兩個 repo 兩個目錄</strong>,後者動的是全 VM 唯一的 gateway)、發版前一分鐘五項檢查。🔴 §0 誠實列出<strong>目前還沒真的跑過</strong>的四個步驟(workflow 沒在真 Actions 上跑過、映像從未推過、VM 目錄還不存在、gateway 路由未提 PR)——第一次發版就是這份 SOP 的第一次演練,故第 1 步是「確認額度」而不是「打 tag」</td></tr></tbody></table></div>
+</body>
+</html>

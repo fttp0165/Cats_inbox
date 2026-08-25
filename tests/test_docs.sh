@@ -57,18 +57,34 @@ else
   ng "CLAUDE.md" "檔案不存在"
 fi
 
+# ── 正式文件鏈:清單**自 render_docs.py 的 TARGETS 自動產生** ─────────
+# 🔴 為什麼不手寫:D01 已經記過一次 —— **新文件不登記進守門的清單,`--check`
+#    會全綠**,因為它根本沒去看那個檔。而那份清單原本手寫了三次,
+#    也就是新增一份文件要記得改四個地方(TARGETS + 這裡三處)。
+#    自動產生之後,「新增文件」與「納入守門」變成同一個動作。
+# ⚠ 解析失敗會讓清單變空,而**空清單的迴圈是全綠的** —— 所以下面立刻
+#    斷言數量下限;數量對不上就紅,而不是靜靜地什麼都沒驗。
+DOC_MD=$(sed -n 's|^ *ROOT / "docs" / "\(.*\)",$|docs/\1|p; s|^ *ROOT / "\(README.md\)",$|\1|p' tools/render_docs.py)
+DOC_COUNT=$(printf '%s\n' "$DOC_MD" | grep -c '\.md$' || true)
+if [ "$DOC_COUNT" -ge 7 ]; then
+  ok "文件鏈清單自 TARGETS 產生($DOC_COUNT 份)"
+else
+  ng "tools/render_docs.py" "只解析到 $DOC_COUNT 份文件(清單可能沒解析成功;守門會變成空檢查)"
+fi
+DOC_HTML=$(printf '%s\n' "$DOC_MD" | sed 's|\.md$|.html|')
+
 echo "[2] 正式文件鏈:md 權威版存在且合第七條"
-for f in docs/開發計畫書.md docs/任務表.md docs/TDD測試計畫表.md docs/SSO接入申請.md docs/契約對齊盤點_v3.3.md docs/架構說明.md README.md; do
+for f in $DOC_MD; do
   if [ -f "$f" ]; then check_meta "$f"; else ng "$f" "檔案不存在"; fi
 done
 
 echo "[3] 正式文件 HTML 發布版存在(第四條4)"
-for f in docs/開發計畫書.html docs/任務表.html docs/TDD測試計畫表.html docs/SSO接入申請.html docs/契約對齊盤點_v3.3.html docs/架構說明.html README.html; do
+for f in $DOC_HTML; do
   [ -f "$f" ] && ok "$f 存在" || ng "$f" "HTML 版不存在(第四條4:md+HTML 並存)"
 done
 
 echo "[4] HTML 為 light 主題、無外部依賴(第四條1/2、契約 §4.10 精神)"
-for f in docs/開發計畫書.html docs/任務表.html docs/TDD測試計畫表.html docs/SSO接入申請.html docs/契約對齊盤點_v3.3.html docs/架構說明.html README.html; do
+for f in $DOC_HTML; do
   [ -f "$f" ] || continue
   if grep -q "prefers-color-scheme: *dark" "$f"; then
     ng "$f" "含 prefers-color-scheme: dark(第四條2 禁止)"
