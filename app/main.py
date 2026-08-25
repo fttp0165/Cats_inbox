@@ -74,6 +74,7 @@ def create_app(*, transport=None, clock=None) -> FastAPI:
     #    「還沒設定完」因此是一個明確狀態(404),不是一個 500。
     if settings.oidc_issuer and settings.session_secret:
         from app.routes_admin import build_admin_router
+        from app.routes_announcements import build_announcements_router
         from app.routes_auth import build_auth_router
         from app.routes_business import build_business_router
         from app.routes_inbox import build_inbox_router
@@ -92,6 +93,7 @@ def create_app(*, transport=None, clock=None) -> FastAPI:
             settings=settings, oidc=oidc, store=store, clock=now
         ))
         router.include_router(build_inbox_router(settings=settings))
+        router.include_router(build_announcements_router())
         router.include_router(build_business_router())
         router.include_router(build_admin_router(settings=settings))
         # `app.state` 是 `app/deps.py` 取用 store/oidc/clock 的唯一途徑

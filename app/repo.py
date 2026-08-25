@@ -15,11 +15,18 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from sqlalchemy import func, select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.orm import Session
 
 from app.authz import ALL_ROLES, ROLE_ADMIN, ROLE_READER
-from app.models import AppUser, Message, UserRole
+from app.models import (
+    AUDIENCE_ALL,
+    Announcement,
+    AnnouncementRead,
+    AppUser,
+    Message,
+    UserRole,
+)
 
 
 def _utcnow() -> datetime:
@@ -225,4 +232,131 @@ def mark_message_read(session: Session, *, message_id, recipient_sub: str) -> Me
         row.is_read = True
         row.read_at = _utcnow()
         session.flush()
+    return row
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# T09:公告(一則對多人)+ 逐人已讀
+#
+# 🔴 **公告與訊息的根本差別,決定了這三個函式長什麼樣:**
+#    訊息是**逐人一列**,已讀狀態就在那一列上;
+#    公告是**一則對多人**,已讀必須放在另一張表 —— 因為一萬個人的公告
+#    若逐人複製,那是一萬列**內容相同**的資料。
+#    所以「已讀」在這裡不是公告的屬性,是 **(公告, 人)** 這個配對的屬性。
+#    把它寫成公告的欄位會讓一個人讀完全公司都變成已讀,
+#    而其他人只是覺得自己**好像看過** —— 沒有人會回報那是 bug。
+# ═══════════════════════════════════════════════════════════════════════
+
+
+def create_announcement(
+    session: Session,
+    *,
+    author_sub: str,
+    title: str,
+    body: str,
+    starts_at: datetime,
+    ends_at: datetime | None,
+    audience: str = AUDIENCE_ALL,
+) -> Announcement:
+    """建立一則公告。
+
+    參數:
+      author_sub — **一律來自已驗簽的 token**,不得取自 request body
+      starts_at  — 生效時間(帶時區);ends_at — 失效時間,None = 無期限
+    回傳: Announcement
+    副作用: INSERT 一列 `announcement`
+
+    🔴 值的合法性(空標題、超長、無時區、空窗、未知 audience)由
+       `app/validation.py` 在**進到這裡之前**擋掉。本函式不再重驗一次:
+       兩處各驗一半的話,兩邊遲早會漂移,而漂移之後**寬的那一邊贏**。
+    """
+    row = Announcement(
+        author_sub=author_sub,
+        title=title,
+        body=body,
+        audience=audience,
+        starts_at=starts_at,
+        ends_at=ends_at,
+    )
+    session.add(row)
+    session.flush()
+    return row
+
+
+def list_active_announcements(
+    session: Session, *, user_sub: str, now: datetime | None = None
+) -> list[tuple[Announcement, bool]]:
+    """列出**目前有效**的公告,附帶「這個人讀過沒」。
+
+    參數: user_sub — 來自 token 的 `sub`;now — 判定用的當下(測試可注入)
+    回傳: [(Announcement, 我讀過沒), ...],新的在前
+    副作用: 無(只讀)
+
+    有效期語意 **`starts_at <= now < ends_at`**(起含、迄不含;`ends_at`
+    為 NULL = 無期限)。⚠ 這與 `app/models.py` 裡 `ix_announcement_window`
+    的註釋必須**逐字一致** —— 兩邊漂移的話索引還在、查詢也還跑得動,
+    只是條件悄悄變了。
+
+    🔴 **兩個條件都要驗。** 只驗 `ends_at` 是最容易漏的一半:
+       排程下週的公告會**當場就出現**,而發布者以為排程生效了。
+
+    🔴 **`user_sub` 必須寫在 JOIN 的 ON 裡,不能搬到 WHERE。**
+       搬到 WHERE 的話,LEFT JOIN 對「別人讀過而我沒讀」的公告會配出
+       **別人的**已讀列,然後被 WHERE 濾掉 ——
+       結果是**別人一讀,那則公告就從我的清單裡消失**。
+       釘住它的是 `test_read_by_one_person_does_not_mark_it_read_for_others`。
+    """
+    at = now or _utcnow()
+    stmt = (
+        select(Announcement, AnnouncementRead.id)
+        .outerjoin(
+            AnnouncementRead,
+            and_(
+                AnnouncementRead.announcement_id == Announcement.id,
+                AnnouncementRead.user_sub == user_sub,
+            ),
+        )
+        .where(
+            Announcement.starts_at <= at,
+            or_(Announcement.ends_at.is_(None), Announcement.ends_at > at),
+        )
+        .order_by(Announcement.starts_at.desc())
+    )
+    return [(ann, read_id is not None) for ann, read_id in session.execute(stmt)]
+
+
+def mark_announcement_read(
+    session: Session, *, announcement_id, user_sub: str
+) -> AnnouncementRead | None:
+    """標記某人讀過某則公告(**冪等**)。
+
+    參數: announcement_id;user_sub — 來自 token 的 `sub`
+    回傳: AnnouncementRead(成功)/ None(**公告不存在**)
+    副作用: 首次呼叫 INSERT 一列 `announcement_read`;第二次**什麼都不做**
+
+    🔴 **冪等的語意是「第二次呼叫不新增列、也不改 `read_at`」**,
+       不只是「不報錯」。
+       - 新增列:表上有唯一約束會擋住 ——但**只擋得住並行以外的重複**,
+         而且撞上去是 IntegrityError(500)。先查再寫,拒收在前;
+       - 改 `read_at`:被覆寫的話,「這則是什麼時候讀的」永遠是最後一次
+         點擊的時間,那個欄位就沒有意義了 —— 而兩次呼叫都回 200。
+
+    ⚠ **已過期的公告仍可標已讀**,刻意不擋:多一個「還在有效期內嗎」的分支
+       只會多一種讓使用者按了沒反應的情況,而標記一則過期公告已讀無害。
+    """
+    if session.get(Announcement, announcement_id) is None:
+        return None
+    existing = session.scalar(
+        select(AnnouncementRead).where(
+            AnnouncementRead.announcement_id == announcement_id,
+            AnnouncementRead.user_sub == user_sub,
+        )
+    )
+    if existing is not None:
+        return existing
+    row = AnnouncementRead(
+        announcement_id=announcement_id, user_sub=user_sub, read_at=_utcnow()
+    )
+    session.add(row)
+    session.flush()
     return row

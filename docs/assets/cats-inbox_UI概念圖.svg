@@ -32,7 +32,7 @@
 
   <!-- ══════ ② 收件匣頁 ══════ -->
   <text x="516" y="76" font-size="12" font-weight="bold" fill="#1f6feb">② 收件匣頁 GET /inbox/ ✅ 已實作</text>
-  <rect x="516" y="86" width="440" height="300" rx="6" fill="#ffffff" stroke="#4a6785" stroke-width="1.8"/>
+  <rect x="516" y="86" width="440" height="356" rx="6" fill="#ffffff" stroke="#4a6785" stroke-width="1.8"/>
   <rect x="516" y="86" width="440" height="38" rx="6" fill="#f6f8fa" stroke="#4a6785" stroke-width="1.8"/>
   <text x="534" y="111" font-size="13" font-weight="bold" fill="#1f2328">收件匣</text>
   <rect x="592" y="98" width="56" height="18" rx="9" fill="#1f6feb"/>
@@ -40,35 +40,45 @@
   <rect x="878" y="96" width="60" height="22" rx="4" fill="#ffffff" stroke="#8b949e"/>
   <text x="908" y="111" text-anchor="middle" font-size="10.5" fill="#57606a">登出</text>
 
+  <!-- 公告卡(T09):排在訊息之前 —— 公告通常有時效,排在下面等於沒發 -->
+  <rect x="534" y="138" width="404" height="56" rx="5" fill="#ffffff" stroke="#d8dee4"/>
+  <rect x="534" y="138" width="4" height="56" fill="#bf8700"/>
+  <rect x="550" y="148" width="40" height="16" rx="8" fill="#bf8700"/>
+  <text x="570" y="160" text-anchor="middle" font-size="9.5" fill="#ffffff">公告</text>
+  <rect x="598" y="148" width="40" height="16" rx="8" fill="#1f6feb"/>
+  <text x="618" y="160" text-anchor="middle" font-size="9.5" fill="#ffffff">未讀</text>
+  <text x="550" y="180" font-size="11.5" font-weight="bold" fill="#1f2328">系統維護公告:8/30 停機 02:00–04:00</text>
+  <text x="782" y="180" font-size="9.5" fill="#57606a">有效期 starts / ends</text>
+
   <!-- 未讀卡片 -->
-  <rect x="534" y="138" width="404" height="66" rx="5" fill="#ffffff" stroke="#d8dee4"/>
-  <rect x="534" y="138" width="4" height="66" fill="#1f6feb"/>
-  <rect x="550" y="150" width="72" height="16" rx="8" fill="#6e7781"/>
-  <text x="586" y="162" text-anchor="middle" font-size="9.5" fill="#ffffff">workorder</text>
-  <rect x="630" y="150" width="40" height="16" rx="8" fill="#1f6feb"/>
-  <text x="650" y="162" text-anchor="middle" font-size="9.5" fill="#ffffff">未讀</text>
-  <text x="550" y="182" font-size="11.5" font-weight="bold" fill="#1f2328">工單 WO-2026-0413 已指派給你</text>
-  <text x="550" y="197" font-size="10" fill="#57606a">2026-08-25 09:12 · 內容純文字,輸出必跳脫</text>
+  <rect x="534" y="194" width="404" height="66" rx="5" fill="#ffffff" stroke="#d8dee4"/>
+  <rect x="534" y="194" width="4" height="66" fill="#1f6feb"/>
+  <rect x="550" y="206" width="72" height="16" rx="8" fill="#6e7781"/>
+  <text x="586" y="218" text-anchor="middle" font-size="9.5" fill="#ffffff">workorder</text>
+  <rect x="630" y="206" width="40" height="16" rx="8" fill="#1f6feb"/>
+  <text x="650" y="218" text-anchor="middle" font-size="9.5" fill="#ffffff">未讀</text>
+  <text x="550" y="238" font-size="11.5" font-weight="bold" fill="#1f2328">工單 WO-2026-0413 已指派給你</text>
+  <text x="550" y="253" font-size="10" fill="#57606a">2026-08-25 09:12 · 內容純文字,輸出必跳脫</text>
 
   <!-- 未讀卡片 2 -->
-  <rect x="534" y="214" width="404" height="66" rx="5" fill="#ffffff" stroke="#d8dee4"/>
-  <rect x="534" y="214" width="4" height="66" fill="#1f6feb"/>
-  <rect x="550" y="226" width="52" height="16" rx="8" fill="#6e7781"/>
-  <text x="576" y="238" text-anchor="middle" font-size="9.5" fill="#ffffff">系統</text>
-  <text x="550" y="258" font-size="11.5" font-weight="bold" fill="#1f2328">系統維護通知:8/30 02:00–04:00</text>
-  <rect x="550" y="264" width="80" height="18" rx="4" fill="#1f6feb"/>
-  <text x="590" y="277" text-anchor="middle" font-size="9.5" fill="#ffffff">前往處理</text>
-  <text x="642" y="277" font-size="9.5" fill="#57606a">action_url 只接受同站值</text>
+  <rect x="534" y="270" width="404" height="66" rx="5" fill="#ffffff" stroke="#d8dee4"/>
+  <rect x="534" y="270" width="4" height="66" fill="#1f6feb"/>
+  <rect x="550" y="282" width="52" height="16" rx="8" fill="#6e7781"/>
+  <text x="576" y="294" text-anchor="middle" font-size="9.5" fill="#ffffff">系統</text>
+  <text x="550" y="314" font-size="11.5" font-weight="bold" fill="#1f2328">系統維護通知:8/30 02:00–04:00</text>
+  <rect x="550" y="320" width="80" height="18" rx="4" fill="#1f6feb"/>
+  <text x="590" y="333" text-anchor="middle" font-size="9.5" fill="#ffffff">前往處理</text>
+  <text x="642" y="333" font-size="9.5" fill="#57606a">action_url 只接受同站值</text>
 
   <!-- 已讀卡片 -->
-  <rect x="534" y="290" width="404" height="52" rx="5" fill="#fafbfc" stroke="#d8dee4"/>
-  <rect x="534" y="290" width="4" height="52" fill="#d8dee4"/>
-  <rect x="550" y="300" width="52" height="16" rx="8" fill="#8b949e"/>
-  <text x="576" y="312" text-anchor="middle" font-size="9.5" fill="#ffffff">sporton</text>
-  <text x="550" y="332" font-size="11.5" fill="#57606a">報價單已核可(已讀)</text>
+  <rect x="534" y="346" width="404" height="52" rx="5" fill="#fafbfc" stroke="#d8dee4"/>
+  <rect x="534" y="346" width="4" height="52" fill="#d8dee4"/>
+  <rect x="550" y="356" width="52" height="16" rx="8" fill="#8b949e"/>
+  <text x="576" y="368" text-anchor="middle" font-size="9.5" fill="#ffffff">sporton</text>
+  <text x="550" y="388" font-size="11.5" fill="#57606a">報價單已核可(已讀)</text>
 
-  <text x="534" y="362" font-size="10.5" fill="#cf222e">🔴 全頁零人名 —— 寄件人一律以 source_app 標籤呈現</text>
-  <text x="534" y="378" font-size="10" fill="#57606a">登入身分只顯示自己的 sub;⚠ 目前無分頁(limit 50)</text>
+  <text x="534" y="418" font-size="10.5" fill="#cf222e">🔴 全頁零人名 —— 寄件人一律以 source_app 標籤呈現</text>
+  <text x="534" y="434" font-size="10" fill="#57606a">登入身分只顯示自己的 sub;⚠ 無分頁(limit 50)、公告發布尚無畫面(T09b)</text>
 
   <!-- ══════ ③ 待開通頁 ══════ -->
   <text x="24" y="308" font-size="12" font-weight="bold" fill="#1f6feb">③ 待開通頁 /inbox/pending ✅</text>
@@ -121,21 +131,21 @@
   <text x="42" y="672" font-size="10" fill="#57606a">附整批 + 單筆清除工具;授權判定一律不讀它</text>
 
   <!-- ══════ 右下:三條 UI 紅線 ══════ -->
-  <rect x="516" y="410" width="440" height="276" rx="6" fill="#fffbf0" stroke="#bf8700" stroke-width="1.5"/>
-  <text x="530" y="434" font-size="12.5" font-weight="bold" fill="#1f2328">🔴 三條會被違反而沒有錯誤訊息的 UI 紅線</text>
+  <rect x="516" y="466" width="440" height="276" rx="6" fill="#fffbf0" stroke="#bf8700" stroke-width="1.5"/>
+  <text x="530" y="490" font-size="12.5" font-weight="bold" fill="#1f2328">🔴 三條會被違反而沒有錯誤訊息的 UI 紅線</text>
 
-  <text x="530" y="462" font-size="11.5" font-weight="bold" fill="#24292f">1. 零外部 CDN(契約 §4.10)</text>
-  <text x="530" y="480" font-size="10.5" fill="#24292f">Bootstrap 本地託管於 /inbox/assets/vendor/。</text>
-  <text x="530" y="496" font-size="10.5" fill="#57606a">⚠ 檔案不在 StaticFiles 掛載目錄下時 app 不送出去 ——</text>
-  <text x="530" y="512" font-size="10.5" fill="#57606a">症狀是「整頁沒有樣式」而伺服器零錯誤(portal 踩過)。</text>
+  <text x="530" y="518" font-size="11.5" font-weight="bold" fill="#24292f">1. 零外部 CDN(契約 §4.10)</text>
+  <text x="530" y="536" font-size="10.5" fill="#24292f">Bootstrap 本地託管於 /inbox/assets/vendor/。</text>
+  <text x="530" y="552" font-size="10.5" fill="#57606a">⚠ 檔案不在 StaticFiles 掛載目錄下時 app 不送出去 ——</text>
+  <text x="530" y="568" font-size="10.5" fill="#57606a">症狀是「整頁沒有樣式」而伺服器零錯誤(portal 踩過)。</text>
 
-  <text x="530" y="542" font-size="11.5" font-weight="bold" fill="#24292f">2. body 純文字 + 輸出必跳脫</text>
-  <text x="530" y="560" font-size="10.5" fill="#24292f">站內信是「使用者輸入直接展示給別人看」。</text>
-  <text x="530" y="576" font-size="10.5" fill="#57606a">同源之下(D2″ 單一 hostname)一次 stored XSS</text>
-  <text x="530" y="592" font-size="10.5" fill="#57606a">可觸及 IdP —— 這是本系統第一風險。</text>
+  <text x="530" y="598" font-size="11.5" font-weight="bold" fill="#24292f">2. body 純文字 + 輸出必跳脫</text>
+  <text x="530" y="616" font-size="10.5" fill="#24292f">站內信是「使用者輸入直接展示給別人看」。</text>
+  <text x="530" y="632" font-size="10.5" fill="#57606a">同源之下(D2″ 單一 hostname)一次 stored XSS</text>
+  <text x="530" y="648" font-size="10.5" fill="#57606a">可觸及 IdP —— 這是本系統第一風險。</text>
 
-  <text x="530" y="622" font-size="11.5" font-weight="bold" fill="#24292f">3. action_url 只接受同站值</text>
-  <text x="530" y="640" font-size="10.5" fill="#24292f">/ 開頭的相對路徑,或 catsapp.sporton.com.tw 前綴;</text>
-  <text x="530" y="656" font-size="10.5" fill="#57606a">其餘寫入時 400 拒收 —— 站內通知是現成的釣魚載具,</text>
-  <text x="530" y="672" font-size="10.5" fill="#57606a">因為它天生就長得「可信」。</text>
+  <text x="530" y="678" font-size="11.5" font-weight="bold" fill="#24292f">3. action_url 只接受同站值</text>
+  <text x="530" y="696" font-size="10.5" fill="#24292f">/ 開頭的相對路徑,或 catsapp.sporton.com.tw 前綴;</text>
+  <text x="530" y="712" font-size="10.5" fill="#57606a">其餘寫入時 400 拒收 —— 站內通知是現成的釣魚載具,</text>
+  <text x="530" y="728" font-size="10.5" fill="#57606a">因為它天生就長得「可信」。</text>
 </svg>

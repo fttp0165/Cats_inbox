@@ -1,8 +1,8 @@
 # cats-inbox TDD 測試計畫表
 
 **建立日期:** 2026-08-15 09:40
-**最後更新:** 2026-08-25 00:05
-**版本:** v1.7
+**最後更新:** 2026-08-25 12:40
+**版本:** v1.8
 
 > 依 `docs/開發計畫書.md` §3 的架構逐元件展開:**每個任務動工前該先寫哪一支會失敗的測試**。
 > 憲法第三條:先寫紅測試釘住預期行為,才改程式;「測試全綠」指**實際跑過看到綠燈**。
@@ -45,7 +45,9 @@ portal-gateway → /inbox/           test_skeleton.py(alias/expose)+ T11 手動 
 cats-inbox-api 容器                test_skeleton.py(non-root/8080/healthcheck/restart)
 cats-inbox-pg(PG15,內部網)       test_skeleton.py(不上 cats-edge、無 ports、具名 volume)
 Keycloak OIDC(身分)              test_auth.py(T04:RS256/aud/exp/±30s/續期)
-訊息與公告(業務)                  test_messages.py(T08–T10:deny-by-default/跳脫/白名單)
+訊息(業務)                        test_inbox.py(T08:deny-by-default/零人名)
+公告(業務)                        test_announcements.py(T09:權限/有效期/逐人已讀)
+輸入驗證與跳脫                      T10 待補(跳脫/action_url 白名單/內容不進 log)
 S2S 推送(系統通知)                test_push.py(T14:無 token/錯 audience → 401)
 front-channel logout(SLO)         test_auth.py(T06:免認證、冪等、只刪 cookie)
 ```
@@ -129,8 +131,17 @@ front-channel logout(SLO)         test_auth.py(T06:免認證、冪等、只刪 c
 | T08 | `test_messages.py::test_cannot_read_other_users_messages` | 讀 `recipient_sub != 自己` → **403** | deny-by-default 的核心;這是本系統最重要的一條 |
 | T08 | `test_messages.py::test_sender_sub_ignores_client_input` | 前端傳 `sender_sub` 一律被忽略,以 token 的 sub 為準 | 寄件人不可偽造(A.3) |
 | T08 | `test_messages.py::test_mark_read_is_idempotent` | 重複標已讀 → 同樣 200,`read_at` 不變 | 輪詢客戶端會重送 |
-| T09 | `test_messages.py::test_non_announcer_cannot_publish` | 無 `announcer` 角色發公告 → 403 | 公告是廣播,權限錯的半徑最大 |
-| T09 | `test_messages.py::test_expired_announcement_not_in_active` | `ends_at` 已過的公告不得出現在 active | |
+| T09 | `test_announcements.py::test_reader_cannot_publish_and_writes_nothing` | 無 `announcer` 發公告 → **403 且資料庫零新增列** | 公告是廣播,權限錯的半徑最大。🔴 **只驗狀態碼不夠**:「先寫進去、再回 403」的實作會照樣綠,而公告已經在表上了 |
+| T09 | `test_announcements.py::test_expired_announcement_not_in_active` | `ends_at` 已過的公告不得出現在 active | |
+| T09 | 🔴 `test_announcements.py::test_future_announcement_not_in_active` | `starts_at` 未到的公告**也**不得出現 | **最容易漏的那一半**:只驗 `ends_at` 的實作會讓排程下週的公告當場就出現,而發布者以為排程生效了 |
+| T09 | `test_announcements.py::test_window_boundary_start_inclusive_end_exclusive` | 邊界語意 `starts_at <= now < ends_at`,以**注入的 now** 驗 | 用真實時鐘驗邊界會隨機失敗,而失敗看起來像程式錯 |
+| T09 | 🔴 `test_announcements.py::test_read_by_one_person_does_not_mark_it_read_for_others` | 甲標已讀後,乙的那則仍是未讀 | 擋「把已讀寫在公告本身」:一個人讀完全公司都變已讀,而**其他人只是覺得自己好像看過** |
+| T09 | `test_announcements.py::test_mark_read_is_idempotent_and_one_row_per_person` | 重複標:不新增列、`read_at` 不變 | 複製列時**畫面完全正常**,只有列數在悄悄長 |
+| T09 | 🔴 `test_announcements.py::test_naive_datetime_is_rejected_400` | 不帶時區的時間 → **400** | 台灣的 `02:00` 當 UTC 存差 8 小時,公告晚 8 小時出現而零錯誤(portal 憲法第四條7 的同一種坑)|
+| T09 | `test_announcements.py::test_inverted_window_is_rejected_400` | `ends_at <= starts_at` → **400** | 空窗公告=發布成功但永遠不出現,而回應是 201 |
+| T09 | `test_announcements.py::test_active_response_has_no_author_identity` | 回應無 `author_sub`、無姓名(**先寫入 L1 快取再斷言**)| §4.2a L1;不先寫入的話快取為空時必然通過=**假綠**(T08 踩過)|
+| T09 | 🔴 `test_announcements.py::test_inbox_page_shows_active_announcements` | 收件匣頁顯示有效公告、不顯示過期的 | 沒有這條的話**公告上線後沒有任何畫面顯示它**,而每一層都回 200 |
+| T09 | `test_announcements.py::test_every_timestamp_in_api_responses_carries_a_timezone` | 公告**與訊息**的每個 `*_at` 都帶時區位移 | 我方拒收不帶時區的**輸入**,就不能吐出不帶時區的**輸出**。⚠ 在 SQLite 上 `.isoformat()` 是 naive、PG 上帶時區——**本機與正式行為不同** |
 | T10 | `test_messages.py::test_body_is_escaped_on_output` | 送入 `<script>alert(1)</script>`,輸出必須是跳脫後的字面文字 | 🔴 R1:同源之下一次 stored XSS 可觸及 IdP |
 | T10 | `test_messages.py::test_action_url_whitelist_rejects` | **反例四則**:外部網址、`javascript:`、協定相對 `//evil.tld`、`https://catsapp.sporton.com.tw.evil.tld/` → 一律 **400** | 🔴 R2:站內通知是現成的釣魚載具;第四個反例是前綴比對的經典漏洞 |
 | T10 | `test_messages.py::test_subject_and_body_never_logged` | log 輸出不得含主旨/內容 | A.3:log 只記 id、sub、事件類型 |
@@ -179,10 +190,11 @@ front-channel logout(SLO)         test_auth.py(T06:免認證、冪等、只刪 c
 | **登出層 9 項(T06)** | ✅ **已跑、全綠**(2026-08-24) |
 | **授權層 13 項(T05)** | ✅ **已跑、全綠**(2026-08-24);含 2 支 AST 源碼檢查 |
 | **收件匣層 14 項(T08)** | ✅ 已跑、全綠(2026-08-25);含靜態資源守門 |
+| **公告層 21 項(T09)** | ✅ 已跑、全綠(2026-08-25);含邊界注入時鐘與「輸出時間必帶時區」|
 | **schema 層 10 項(T07)** | ✅ 已在**真的 PostgreSQL 16.13** 上跑過;含 model↔migration 的 schema 比對 |
 | **migration 層 3 項(T05)** | ✅ 已在**真的 PostgreSQL 16.13** 上跑過。🔴 **PG15 未演練**(本機無 PG15、無 docker daemon)——留 T11 於 VM 補;⚠ 無 PG 時本組 **skip**,`run_all.sh` 會把 skip 數量印出來 |
-| M3–M6 測試 | ⬜ **尚未撰寫**(規格見 §3;不得視為已覆蓋)。⚠ T14 的規格已於 2026-08-18 由 portal 核定,五支測試的斷言已具體化 |
-| T07–T12 / T14–T17 測試 | ⬜ 尚未撰寫(規格見 §3)|
+| M4–M6 測試 | ⬜ **尚未撰寫**(規格見 §3;不得視為已覆蓋)。⚠ T14 的規格已於 2026-08-18 由 portal 核定,五支測試的斷言已具體化 |
+| T09b / T10 / T11 / T12 / T14–T17 測試 | ⬜ 尚未撰寫(規格見 §3)|
 | 真 IdP / gateway 冒煙 | ⬜ **尚未執行**(client 已核發,但 secret 尚未進本服務;需 T11 路由。CI 跑不動) |
 | `docker compose config` 解析 | ✅ 已於本機驗過(Compose v5.1.1);**容器實際啟動尚未驗**(本環境無 docker daemon) |
 
@@ -334,12 +346,37 @@ JSON 欄位就是那個面。已補兩條:①API 回應不得出現快取的姓�
 它會改寫工作目錄,而還原不是原子的。
 
 
+
+### 5.8 突變檢查(T09,2026-08-25)
+
+**17 項全被抓到。** 四項值得單獨記:
+
+| 故意改壞 | 對應測試 | 結果 |
+|---|---|---|
+| 有效期不驗 `starts_at`(排程公告當場出現) | `test_future_announcement_not_in_active` | ✅ 紅 |
+| `user_sub` 從 JOIN 的 ON 搬到 WHERE | `test_read_by_one_person_does_not_mark_it_read_for_others` | ✅ 紅 |
+| 發布端點改成只要 `read_own` | `test_reader_cannot_publish_and_writes_nothing` | ✅ 紅 |
+| 輸出時間退回 `.isoformat()` | `test_every_timestamp_in_api_responses_carries_a_timezone` | ✅ 紅 |
+
+⚠ **第一輪有 1 項顯示「未抓到」,查為工具錯,不是測試有洞。**
+那個 `sed` 把 `Announcement.starts_at <= at,` 改成 `Announcement.starts_at <= at, True,`
+—— 條件還在,只是多了一個恆真項,**根本不是我想測的那個突變**。
+改成整條替換為 `True,` 之後立刻紅。
+🔴 這與 T06 的「拿掉 `no-store`」是同一種誤判:**突變沒套用**與
+**測試沒抓到**在腳本輸出上長得一模一樣。故本次腳本加了
+「sed 前後檔案沒變就報『突變沒套用』」這一道 —— 它擋的正是這個。
+
+🔴 **第二欄的 `user_sub` 那一項值得記住**:把它從 ON 搬到 WHERE,
+結果不是「已讀狀態錯了」,是**別人一讀,那則公告就從我的清單裡消失**
+—— 而消失的東西沒有人會回報。
+
 ---
 
 ## 版本歷史
 
 | 版本 | 日期 | 修改人 | 摘要 |
 |---|---|---|---|
+| v1.8 | 2026-08-25 | Benny | **T09 完工回寫**:§3 的 T09 由 2 列擴為 **11 列**(原本只寫了「非 announcer 403」與「過期不出現」兩條,而檔名還寫成 `test_messages.py`);§5 覆蓋現況加**公告層 21 項**;新增 §5.8 突變檢查 **17/17**。🔴 兩條在原規格裡不存在、而壞掉不會有錯誤訊息的:①**未來的公告也不得出現**(只驗 `ends_at` 是最容易漏的一半),②**甲讀過不得讓乙變已讀**——而該項的突變結果更值得記:把 `user_sub` 從 JOIN 的 ON 搬到 WHERE,症狀不是「已讀錯了」而是**別人一讀那則公告就從我的清單裡消失**,而消失的東西沒有人會回報。⚠ 第一輪有 1 項顯示未抓到,查為 **sed 沒真的改到語意**(加了恆真項而條件還在)——與 T06 的「拿掉 no-store」同一種誤判;腳本已加「突變沒套用就明講」的偵測 |
 | v1.7 | 2026-08-25 | Benny | **T08 完工回寫**:§5 覆蓋現況加收件匣層 14 項;§5.7 突變檢查 **9/9**。🔴 記一個**測試的洞**:「零人名」原本只驗 HTML 頁面,而往 API 回應加姓名欄位**測試照樣綠**(模板沒算繪它,但前端 JS 拿得到,而 §4.2a L1 禁的是「一般使用者可見的面」)——已補「API 回應不得含姓名類欄位」的結構性斷言。⚠ 另記**量測工具**的第二次問題:突變腳本的還原不是原子的,同一秒內完成時 Python 會沿用由突變後原始碼編出的 `.pyc`,使突變留在工作目錄而 `git status` 看不出來;已加 `__pycache__` 清除,並作為「突變腳本不進 repo」的第二個理由 |
 | v1.6 | 2026-08-24 | Benny | **T07 完工回寫**:新增 9 支 schema 測試規格(`test_schema.py`),逐支寫出「壞掉時沒有症狀」的理由;§5 覆蓋現況加 schema 層 10 項;§5.6 突變檢查 **9/9 全被抓到**。🔴 其中 `test_models_match_migration_schema` **補 T05 誠實標註的盲點**——`create_all()` 與 migration 的 schema 在此之前從來沒有人比對過,而漂移的症狀是「本機全綠、部署後少一個欄位」;`test_message_recipient_sub_has_no_fk` 則是**斷言一個約束不存在**,擋的是「日後有人順手補上外鍵」那個看起來在修缺漏、實際把能力靜默關掉的動作 |
 | v1.5 | 2026-08-24 | Benny | **T05 完工回寫**:T05 規格由 4 支擴為 **13 支 + migration 3 支**(檔案 `test_authz.py` / `test_migration.py`),逐支寫出「壞掉時沒有症狀」的理由;§5 覆蓋現況新增授權層與 migration 層,並**誠實標明 PG15 未演練**(本機只有 PG16.13,無 docker daemon);§5.4 突變檢查 **10/10 全被抓到**;§5.5 記兩個**測試自身**的缺陷——🔴 相對路徑讓同一支測試「從 repo 根綠、經 `run_all.sh` 紅」,以及 `test_downgrade_is_not_a_stub` 把 `op.drop_table` 當成 docstring 濾掉而誤判每個正確的 downgrade |

@@ -30,6 +30,8 @@
     body { background: #f6f7f9; }
     .msg-unread { border-left: 4px solid #1f6feb; }
     .msg-read { border-left: 4px solid #d8dee4; }
+    .ann-unread { border-left: 4px solid #bf8700; }
+    .ann-read { border-left: 4px solid #e6d9b8; }
     .src-tag { font-size: .75rem; letter-spacing: .02em; }
     .msg-body { white-space: pre-wrap; word-break: break-word; }
   </style>
@@ -46,6 +48,45 @@
       </h1>
       <a class="btn btn-outline-secondary btn-sm" href="{{ base_path }}/logout">登出</a>
     </header>
+
+    {# ── 公告區(T09)────────────────────────────────────────────────
+       🔴 公告排在訊息**之前**:它是一則對多人、通常有時效的東西
+          (維護時段、政策變更),排在下面等於沒發。
+       🔴 這一區同樣**零人名** —— 公告的作者是一個**人**(訊息階段一全是
+          系統發的),也就是說這裡才是姓名第一次真的有機會洩漏的地方。
+          模板拿到的資料裡連 `author_sub` 都沒有。
+       ⚠ 已讀/未讀用**邊框顏色 + 徽章**表示,不用背景色 —— 深底淺字
+          會違反憲法第四條(一律 light、白底深字)。 #}
+    {% if announcements %}
+      <section class="mb-4" aria-labelledby="ann-heading">
+        <h2 class="h6 text-secondary mb-2" id="ann-heading">
+          公告
+          {% if announcements_unread %}
+            <span class="badge text-bg-warning align-middle ms-1">{{ announcements_unread }} 未讀</span>
+          {% endif %}
+        </h2>
+        <ul class="list-unstyled mb-0">
+          {% for a in announcements %}
+            <li class="card mb-2 {{ 'ann-read' if a.is_read else 'ann-unread' }}">
+              <div class="card-body py-3">
+                <div class="d-flex align-items-center gap-2 mb-1">
+                  <span class="badge text-bg-warning src-tag">公告</span>
+                  {% if not a.is_read %}
+                    <span class="badge text-bg-primary src-tag">未讀</span>
+                  {% endif %}
+                </div>
+                <h3 class="h6 mb-1">{{ a.title }}</h3>
+                <p class="msg-body mb-2 text-secondary small">{{ a.body }}</p>
+                <div class="text-secondary" style="font-size: .75rem;">
+                  {{ a.starts_at }}
+                  {% if a.ends_at %} — {{ a.ends_at }}{% else %} — 長期{% endif %}
+                </div>
+              </div>
+            </li>
+          {% endfor %}
+        </ul>
+      </section>
+    {% endif %}
 
     {% if not items %}
       <div class="alert alert-light border" role="status">

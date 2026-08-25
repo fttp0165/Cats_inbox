@@ -21,11 +21,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends
 from fastapi.responses import JSONResponse
 
-from app.authz import (
-    CAP_PUBLISH_ANNOUNCEMENT,
-    CAP_SEND_MESSAGE,
-    require_capability,
-)
+from app.authz import CAP_SEND_MESSAGE, require_capability
 
 _NOT_YET = JSONResponse(
     {"error": "not_implemented", "detail": "授權已通過;功能實作在 T08/T09"},
@@ -51,16 +47,14 @@ def build_business_router() -> APIRouter:
         """寄站內信。
 
         能力:`send_message`(**`reader` 沒有** —— 這就是 C1 的邊界)
-        🔴 T09 實作時,`sender_sub` 一律由後端自 token 取得(本專案紅線)。
+        🔴 實作時(M6 階段二),`sender_sub` 一律由後端自 token 取得(本專案紅線)。
         """
         return _NOT_YET
 
-    @router.post("/announcements")
-    def publish_announcement(_=Depends(require_capability(CAP_PUBLISH_ANNOUNCEMENT))):
-        """發布公告。
-
-        能力:`publish_announcement`(**`reader` 沒有**)
-        """
-        return _NOT_YET
+    # ⚠ `POST /announcements` 的 501 外殼已於 **T09** 移除 —— 它現在由
+    #   `app/routes_announcements.py` 真正實作(含 `active` 與逐人已讀)。
+    #   留著一個回 501 的同路徑端點會遮蔽真正的實作,而 FastAPI 不會警告
+    #   ——先註冊的那個贏,於是「功能做完了卻還是 501」。
+    #   (T08 對 `GET /messages` 記過同一件事;這是第二次,所以兩處都留註記。)
 
     return router

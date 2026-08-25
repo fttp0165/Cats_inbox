@@ -29,7 +29,14 @@ from fastapi.templating import Jinja2Templates
 from app.authz import CAP_READ_OWN, Forbidden, require_capability
 from app.db import session_scope
 from app.oidc import log_event
-from app.repo import count_unread, list_messages, mark_message_read
+from app.repo import (
+    count_unread,
+    list_active_announcements,
+    list_messages,
+    mark_message_read,
+)
+from app.routes_announcements import serialize_announcement
+from app.validation import iso_utc
 
 
 def _serialize(msg) -> dict:
@@ -53,8 +60,13 @@ def _serialize(msg) -> dict:
         "action_url": msg.action_url,
         "source_app": msg.source_app,
         "is_read": msg.is_read,
-        "read_at": msg.read_at.isoformat() if msg.read_at else None,
-        "created_at": msg.created_at.isoformat(),
+        # 🔴 T09 起改走 `iso_utc`:原本的 `.isoformat()` 在 **SQLite** 上
+        #    吐出的是**不帶時區**的字串(它不存時區,PostgreSQL 的
+        #    `timestamptz` 會保留)——同一個欄位在「剛寫入」與「重讀」時
+        #    長得不一樣,而我方的寫入端正是拒收不帶時區的值。
+        #    輸出與輸入必須對稱,見 `app/validation.py::iso_utc`。
+        "read_at": iso_utc(msg.read_at),
+        "created_at": iso_utc(msg.created_at),
     }
 
 
@@ -142,22 +154,35 @@ def build_inbox_router(*, settings) -> APIRouter:
         副作用: 無(只讀)
 
         🔴 **階段一零人名**:模板拿到的每一筆都只有 `source_app`,
-           連 `sender_sub` 都沒有(見 `_serialize` 的說明)。
+           連 `sender_sub` 都沒有(見 `_serialize` 的說明);
+           公告那一區同樣不帶 `author_sub`(見 `serialize_announcement`)。
         ⚠ 未登入時這一頁是 **401**,不是導向 IdP —— 導向要等 T12 的入口整合
            決定「深層頁未登入該怎麼辦」(契約對 upload-program 的核准偏離
            只涵蓋**首頁本身**,不涵蓋深層頁)。
+
+        🔴 **T09 起這一頁同時顯示公告。** 沒有這一段的話,公告上線之後
+           沒有任何畫面顯示它 —— 而發布 API 回 201、`active` 也回得出來,
+           **零錯誤訊息的功能缺口**(理由與處置見 T09 dev-log 計畫段)。
         """
         sub, _roles = identity
         with session_scope() as session:
             rows = list_messages(session, recipient_sub=sub)
             items = [_serialize(m) for m in rows]
             unread = count_unread(session, recipient_sub=sub)
+            announcements = [
+                serialize_announcement(a, read)
+                for a, read in list_active_announcements(session, user_sub=sub)
+            ]
         return templates.TemplateResponse(
             request=request,
             name="inbox.html",
             context={
                 "items": items,
                 "unread": unread,
+                "announcements": announcements,
+                "announcements_unread": sum(
+                    1 for a in announcements if not a["is_read"]
+                ),
                 "base_path": settings.base_path,
                 # 🔴 刻意傳 `sub` 而不是姓名:待開通頁已經是這個做法(契約 §4.3),
                 #    而收件匣頁**不顯示任何人名**(§4.2a L1、DI-3 未裁決)。
