@@ -1,8 +1,8 @@
 # cats-inbox 發版 SOP
 
 **建立日期:** 2026-08-25 17:05
-**最後更新:** 2026-08-25 17:05
-**版本:** v1.0
+**最後更新:** 2026-08-26 14:20
+**版本:** v1.1
 **適用範圍:** cats-inbox 的每一次發版(打 tag → 建映像 → VM 換版)
 **權威依據:** 憲法**第八條**(發版儀式)+ 平台紅線(不用 `latest`、不在正式機建置)
 
@@ -30,26 +30,34 @@
 
 ## 1. 發版前(在**開發者本機**)
 
-【開發者本機】【repo 根,分支 `main`(或要發版的那條)】【cats-inbox】
+**① 確認 Actions 額度還夠**
+
+> 🖥️ **在哪執行:** GitHub UI(不是指令)
+
+portal 的 CI 曾因額度用盡紅了一週(2026-08-24),而那種故障的症狀是
+**發版當下才發現建不出來**。看 Settings → Billing → Actions 的剩餘分鐘數。
+
+**② 改版本號常數**(🔴 第八條4:必須在打 tag 之前改)
+
+版本號會顯示給使用者(`/inbox/health`、頁尾),tag 與常數不一致等於說謊。
+🔴 **兩個檔都要改**,而它們在不同的目錄層級:
+
+> 🖥️ **在哪執行:** WSL(Ubuntu)· 工作目錄 ~/Cats_inbox · 分支 main
+> 📄 **編輯哪個檔:** ~/Cats_inbox/app/__init__.py  → `__version__ = "0.2.0"`
+> 📄 **編輯哪個檔:** ~/Cats_inbox/docker-compose.yml → `image: ghcr.io/fttp0165/cats-inbox-api:0.2.0`
+
+**③ 全部測試跑過**(🔴 含 migration 那 13 項 —— 要起本機 PG,否則它們是
+skipped 而不是 passed,而兩者在輸出上長得很像)
+
+> 🖥️ **在哪執行:** WSL(Ubuntu)· 工作目錄 ~/Cats_inbox · 分支 main
 
 ```bash
-# ① 確認 Actions 額度還夠 —— portal 的 CI 曾因額度用盡紅了一週(2026-08-24),
-#    而那種故障的症狀是「發版當下才發現建不出來」。
-#    在 GitHub UI:Settings → Billing → Actions 看剩餘分鐘數。
-
-# ② 版本號常數改成要發的版(🔴 第八條4:必須在打 tag 之前改)
-#    版本號會顯示給使用者(/inbox/health、頁尾),tag 與常數不一致等於說謊。
-$EDITOR app/__init__.py          # __version__ = "0.2.0"
-$EDITOR docker-compose.yml       # image: ghcr.io/fttp0165/cats-inbox-api:0.2.0
-
-# ③ 全部測試跑過(🔴 含 migration 那 13 項 —— 要起本機 PG,
-#    否則它們是 skipped 而不是 passed,而兩者在輸出上長得很像)
 eval "$(bash tests/pg_local.sh start)"
 bash tests/run_all.sh
-
-# ④ 有 migration 的版本:本機 up → down → up 演練(第八條6)
-#    沒有新 migration 的版本跳過這一步。
 ```
+
+**④ 有 migration 的版本:本機 up → down → up 演練**(第八條6)。
+沒有新 migration 的版本跳過這一步。
 
 🔴 **②的兩個檔案必須一起改。** 只改常數而忘了 compose 的後果是
 **部署的是舊映像**,而它的 health 回報**舊版本** —— 兩者「看起來完全一致」,
@@ -60,7 +68,7 @@ bash tests/run_all.sh
 
 ## 2. 打 tag(在**開發者本機**或 **GitHub UI**)
 
-【開發者本機】【repo 根,分支 `main`】【cats-inbox】
+> 🖥️ **在哪執行:** WSL(Ubuntu)· 工作目錄 ~/Cats_inbox · 分支 main
 
 ```bash
 git tag -a v0.2.0 -m "v0.2.0"
@@ -115,7 +123,8 @@ git push origin v0.2.0
 
 ⚠ **這一節在 T11 完成前都用不到**(`/opt/cats-inbox` 尚不存在)。
 
-【CATS VM(Ubuntu)】【`/opt/cats-inbox`】【cats-inbox】
+> 🖥️ **在哪執行:** Cats VM(ssh 進去)· 工作目錄 /opt/cats-inbox
+> 📄 **編輯哪個檔:** /opt/cats-inbox/docker-compose.yml(把映像 tag 改成本版)
 
 ```bash
 # ① 改 tag 後 pull —— 🔴 不在正式機 `git pull && build`(平台紅線)
@@ -129,15 +138,18 @@ curl -s http://127.0.0.1:8080/inbox/health   # 容器內部;version 應為 0.2.0
 
 🔴 **接著這一行動的是 portal 擁有的 gateway,不是本服務**:
 
-【CATS VM(Ubuntu)】【`/opt/cats-portal`】【**cats-portal**】
+> 🖥️ **在哪執行:** Cats VM(ssh 進去)· 工作目錄 /opt/cats-portal
+> 🏷️ **動到誰的東西:** cats-portal(全 VM 唯一的 gateway,綁 80/443)
 
 ```bash
 sudo docker exec portal-gateway nginx -s reload
 ```
 
 ⚠ 本專案最容易貼錯的一組就是這兩段 —— 上面在 `/opt/cats-inbox`,
-下面在 **portal 的**目錄、動的是綁 80/443 的**全 VM 唯一入口**。
-**貼錯的代價是動到正式站,而錯誤不會當場顯現**(憲法第九條11)。
+這一段在 **portal 的**目錄、動的是綁 80/443 的**全 VM 唯一入口**。
+🔴 這個指令的**工作目錄根本不重要**,「動到誰的東西」那一行才是全部的重點
+——這就是憲法**第九條13** 存在的理由。
+**貼錯的代價是動到正式站,而錯誤不會當場顯現。**
 
 ---
 
@@ -157,4 +169,5 @@ sudo docker exec portal-gateway nginx -s reload
 
 | 版本 | 日期 | 修改人 | 摘要 |
 |---|---|---|---|
+| v1.1 | 2026-08-26 | Benny | **改用憲法 v1.5 的新指令位置格式**(D02)。五處指令區塊由 `【機器】【路徑】【專案】` 改為 `> 🖥️ 在哪執行` 引言;🔴 §1 原本把要改的檔藏在指令裡(`$EDITOR app/__init__.py`)—— 現在改成**兩行 `📄 編輯哪個檔` 明列完整路徑**,因為相對路徑要讀的人自己推,而推錯不會有錯誤訊息(改到另一個 repo 裡同名的檔,測試照樣綠);§4 的 gateway reload 改用**第九條13 的 `🏷️ 動到誰的東西`** —— 那個指令的工作目錄根本不重要,而動的是 portal 擁有的全 VM 唯一入口 |
 | v1.0 | 2026-08-25 | Benny | 初版(T10c)。把憲法第八條變成可照做的五節:發版前(改**兩個**檔案的版本號、跑含 PG 的全測試、migration 雙向演練)、打 tag(workflow 自動驗三道一致性)、寫 Release(四段模板逐段給例)、VM 換版(🔴 兩段指令分屬**兩個 repo 兩個目錄**,後者動的是全 VM 唯一的 gateway)、發版前一分鐘五項檢查。🔴 §0 誠實列出**目前還沒真的跑過**的四個步驟(workflow 沒在真 Actions 上跑過、映像從未推過、VM 目錄還不存在、gateway 路由未提 PR)——第一次發版就是這份 SOP 的第一次演練,故第 1 步是「確認額度」而不是「打 tag」 |

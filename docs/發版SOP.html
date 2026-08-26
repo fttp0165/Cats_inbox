@@ -37,7 +37,7 @@ figure.svg svg { max-width:100%; height:auto; }
 </head>
 <body>
 <h1>cats-inbox 發版 SOP</h1>
-<p><strong>建立日期:</strong> 2026-08-25 17:05<br><strong>最後更新:</strong> 2026-08-25 17:05<br><strong>版本:</strong> v1.0<br><strong>適用範圍:</strong> cats-inbox 的每一次發版(打 tag → 建映像 → VM 換版)<br><strong>權威依據:</strong> 憲法<strong>第八條</strong>(發版儀式)+ 平台紅線(不用 <code>latest</code>、不在正式機建置)</p>
+<p><strong>建立日期:</strong> 2026-08-25 17:05<br><strong>最後更新:</strong> 2026-08-26 14:20<br><strong>版本:</strong> v1.1<br><strong>適用範圍:</strong> cats-inbox 的每一次發版(打 tag → 建映像 → VM 換版)<br><strong>權威依據:</strong> 憲法<strong>第八條</strong>(發版儀式)+ 平台紅線(不用 <code>latest</code>、不在正式機建置)</p>
 <blockquote><p>本文把第八條變成一份<strong>照著做就會對</strong>的清單。<br>🔴 憲法寫了「content 必含四段」,而在本文之前沒有任何清單把它變成步驟<br>—— 那條規則就只在有人記得的時候生效。</p></blockquote>
 <hr>
 <h2>0. 現在還沒真的跑過哪些步驟(先講清楚)</h2>
@@ -46,27 +46,21 @@ figure.svg svg { max-width:100%; height:auto; }
 <p>⚠ 也就是說:<strong>第一次發版就是這份 SOP 的第一次演練</strong>。第 1 步因此是「確認額度」,<br>而不是「打 tag」。</p>
 <hr>
 <h2>1. 發版前(在<strong>開發者本機</strong>)</h2>
-<p>【開發者本機】【repo 根,分支 <code>main</code>(或要發版的那條)】【cats-inbox】</p>
-<pre><code># ① 確認 Actions 額度還夠 —— portal 的 CI 曾因額度用盡紅了一週(2026-08-24),
-#    而那種故障的症狀是「發版當下才發現建不出來」。
-#    在 GitHub UI:Settings → Billing → Actions 看剩餘分鐘數。
-
-# ② 版本號常數改成要發的版(🔴 第八條4:必須在打 tag 之前改)
-#    版本號會顯示給使用者(/inbox/health、頁尾),tag 與常數不一致等於說謊。
-$EDITOR app/__init__.py          # __version__ = "0.2.0"
-$EDITOR docker-compose.yml       # image: ghcr.io/fttp0165/cats-inbox-api:0.2.0
-
-# ③ 全部測試跑過(🔴 含 migration 那 13 項 —— 要起本機 PG,
-#    否則它們是 skipped 而不是 passed,而兩者在輸出上長得很像)
-eval "$(bash tests/pg_local.sh start)"
-bash tests/run_all.sh
-
-# ④ 有 migration 的版本:本機 up → down → up 演練(第八條6)
-#    沒有新 migration 的版本跳過這一步。</code></pre>
+<p><strong>① 確認 Actions 額度還夠</strong></p>
+<blockquote><p>🖥️ <strong>在哪執行:</strong> GitHub UI(不是指令)</p></blockquote>
+<p>portal 的 CI 曾因額度用盡紅了一週(2026-08-24),而那種故障的症狀是<br><strong>發版當下才發現建不出來</strong>。看 Settings → Billing → Actions 的剩餘分鐘數。</p>
+<p><strong>② 改版本號常數</strong>(🔴 第八條4:必須在打 tag 之前改)</p>
+<p>版本號會顯示給使用者(<code>/inbox/health</code>、頁尾),tag 與常數不一致等於說謊。<br>🔴 <strong>兩個檔都要改</strong>,而它們在不同的目錄層級:</p>
+<blockquote><p>🖥️ <strong>在哪執行:</strong> WSL(Ubuntu)· 工作目錄 ~/Cats_inbox · 分支 main<br>📄 <strong>編輯哪個檔:</strong> ~/Cats_inbox/app/__init__.py  → <code>__version__ = "0.2.0"</code><br>📄 <strong>編輯哪個檔:</strong> ~/Cats_inbox/docker-compose.yml → <code>image: ghcr.io/fttp0165/cats-inbox-api:0.2.0</code></p></blockquote>
+<p><strong>③ 全部測試跑過</strong>(🔴 含 migration 那 13 項 —— 要起本機 PG,否則它們是<br>skipped 而不是 passed,而兩者在輸出上長得很像)</p>
+<blockquote><p>🖥️ <strong>在哪執行:</strong> WSL(Ubuntu)· 工作目錄 ~/Cats_inbox · 分支 main</p></blockquote>
+<pre><code>eval "$(bash tests/pg_local.sh start)"
+bash tests/run_all.sh</code></pre>
+<p><strong>④ 有 migration 的版本:本機 up → down → up 演練</strong>(第八條6)。<br>沒有新 migration 的版本跳過這一步。</p>
 <p>🔴 <strong>②的兩個檔案必須一起改。</strong> 只改常數而忘了 compose 的後果是<br><strong>部署的是舊映像</strong>,而它的 health 回報<strong>舊版本</strong> —— 兩者「看起來完全一致」,<br>而你以為換版成功了。守門是 <code>tests/test_release.py::test_compose_image_tag_matches_version_constant</code><br>與 workflow 裡的第①道檢查(它會讓建置直接失敗)。</p>
 <hr>
 <h2>2. 打 tag(在<strong>開發者本機</strong>或 <strong>GitHub UI</strong>)</h2>
-<p>【開發者本機】【repo 根,分支 <code>main</code>】【cats-inbox】</p>
+<blockquote><p>🖥️ <strong>在哪執行:</strong> WSL(Ubuntu)· 工作目錄 ~/Cats_inbox · 分支 main</p></blockquote>
 <pre><code>git tag -a v0.2.0 -m "v0.2.0"
 git push origin v0.2.0</code></pre>
 <p>推上去之後 <code>release-image.yml</code> 會自動:</p>
@@ -97,7 +91,7 @@ git push origin v0.2.0</code></pre>
 <hr>
 <h2>4. VM 換版(在 <strong>CATS VM</strong>)</h2>
 <p>⚠ <strong>這一節在 T11 完成前都用不到</strong>(<code>/opt/cats-inbox</code> 尚不存在)。</p>
-<p>【CATS VM(Ubuntu)】【<code>/opt/cats-inbox</code>】【cats-inbox】</p>
+<blockquote><p>🖥️ <strong>在哪執行:</strong> Cats VM(ssh 進去)· 工作目錄 /opt/cats-inbox<br>📄 <strong>編輯哪個檔:</strong> /opt/cats-inbox/docker-compose.yml(把映像 tag 改成本版)</p></blockquote>
 <pre><code># ① 改 tag 後 pull —— 🔴 不在正式機 `git pull &amp;&amp; build`(平台紅線)
 sudo sed -i 's|cats-inbox-api:.*|cats-inbox-api:0.2.0|' docker-compose.yml
 sudo docker compose pull
@@ -106,14 +100,14 @@ sudo docker compose up -d
 # ② 驗證(換版後的驗證點,對照 Release 的「部署注意」)
 curl -s http://127.0.0.1:8080/inbox/health   # 容器內部;version 應為 0.2.0</code></pre>
 <p>🔴 <strong>接著這一行動的是 portal 擁有的 gateway,不是本服務</strong>:</p>
-<p>【CATS VM(Ubuntu)】【<code>/opt/cats-portal</code>】【<strong>cats-portal</strong>】</p>
+<blockquote><p>🖥️ <strong>在哪執行:</strong> Cats VM(ssh 進去)· 工作目錄 /opt/cats-portal<br>🏷️ <strong>動到誰的東西:</strong> cats-portal(全 VM 唯一的 gateway,綁 80/443)</p></blockquote>
 <pre><code>sudo docker exec portal-gateway nginx -s reload</code></pre>
-<p>⚠ 本專案最容易貼錯的一組就是這兩段 —— 上面在 <code>/opt/cats-inbox</code>,<br>下面在 <strong>portal 的</strong>目錄、動的是綁 80/443 的<strong>全 VM 唯一入口</strong>。<br><strong>貼錯的代價是動到正式站,而錯誤不會當場顯現</strong>(憲法第九條11)。</p>
+<p>⚠ 本專案最容易貼錯的一組就是這兩段 —— 上面在 <code>/opt/cats-inbox</code>,<br>這一段在 <strong>portal 的</strong>目錄、動的是綁 80/443 的<strong>全 VM 唯一入口</strong>。<br>🔴 這個指令的<strong>工作目錄根本不重要</strong>,「動到誰的東西」那一行才是全部的重點<br>——這就是憲法<strong>第九條13</strong> 存在的理由。<br><strong>貼錯的代價是動到正式站,而錯誤不會當場顯現。</strong></p>
 <hr>
 <h2>5. 發版前一分鐘檢查(第八條6)</h2>
 <div class="tablewrap"><table><thead><tr><th>#</th><th>檢查</th><th>不做的後果</th></tr></thead><tbody><tr><td>1</td><td><code>__version__</code> 與 compose 的 tag 都改成本版了</td><td>部署舊映像而 health 回報舊版本,<strong>看起來完全一致</strong></td></tr><tr><td>2</td><td>測試全綠,且 migration 那 13 項<strong>不是 skipped</strong></td><td>「93 passed」與「全部跑過」在輸出上長得一樣</td></tr><tr><td>3</td><td>有 migration 的版本已本機 up→down→up</td><td>回滾時才發現 downgrade 是空的</td></tr><tr><td>4</td><td>Release 四段都寫了,且未跑過的如實標未跑過</td><td>讀的人拿它當現況,而它看起來很完整</td></tr><tr><td>5</td><td>Actions 額度還夠</td><td>打了 tag 才發現建不出來,而 tag 不能重發</td></tr></tbody></table></div>
 <hr>
 <h2>版本歷史</h2>
-<div class="tablewrap"><table><thead><tr><th>版本</th><th>日期</th><th>修改人</th><th>摘要</th></tr></thead><tbody><tr><td>v1.0</td><td>2026-08-25</td><td>Benny</td><td>初版(T10c)。把憲法第八條變成可照做的五節:發版前(改<strong>兩個</strong>檔案的版本號、跑含 PG 的全測試、migration 雙向演練)、打 tag(workflow 自動驗三道一致性)、寫 Release(四段模板逐段給例)、VM 換版(🔴 兩段指令分屬<strong>兩個 repo 兩個目錄</strong>,後者動的是全 VM 唯一的 gateway)、發版前一分鐘五項檢查。🔴 §0 誠實列出<strong>目前還沒真的跑過</strong>的四個步驟(workflow 沒在真 Actions 上跑過、映像從未推過、VM 目錄還不存在、gateway 路由未提 PR)——第一次發版就是這份 SOP 的第一次演練,故第 1 步是「確認額度」而不是「打 tag」</td></tr></tbody></table></div>
+<div class="tablewrap"><table><thead><tr><th>版本</th><th>日期</th><th>修改人</th><th>摘要</th></tr></thead><tbody><tr><td>v1.1</td><td>2026-08-26</td><td>Benny</td><td><strong>改用憲法 v1.5 的新指令位置格式</strong>(D02)。五處指令區塊由 <code>【機器】【路徑】【專案】</code> 改為 <code>&gt; 🖥️ 在哪執行</code> 引言;🔴 §1 原本把要改的檔藏在指令裡(<code>$EDITOR app/__init__.py</code>)—— 現在改成<strong>兩行 <code>📄 編輯哪個檔</code> 明列完整路徑</strong>,因為相對路徑要讀的人自己推,而推錯不會有錯誤訊息(改到另一個 repo 裡同名的檔,測試照樣綠);§4 的 gateway reload 改用<strong>第九條13 的 <code>🏷️ 動到誰的東西</code></strong> —— 那個指令的工作目錄根本不重要,而動的是 portal 擁有的全 VM 唯一入口</td></tr><tr><td>v1.0</td><td>2026-08-25</td><td>Benny</td><td>初版(T10c)。把憲法第八條變成可照做的五節:發版前(改<strong>兩個</strong>檔案的版本號、跑含 PG 的全測試、migration 雙向演練)、打 tag(workflow 自動驗三道一致性)、寫 Release(四段模板逐段給例)、VM 換版(🔴 兩段指令分屬<strong>兩個 repo 兩個目錄</strong>,後者動的是全 VM 唯一的 gateway)、發版前一分鐘五項檢查。🔴 §0 誠實列出<strong>目前還沒真的跑過</strong>的四個步驟(workflow 沒在真 Actions 上跑過、映像從未推過、VM 目錄還不存在、gateway 路由未提 PR)——第一次發版就是這份 SOP 的第一次演練,故第 1 步是「確認額度」而不是「打 tag」</td></tr></tbody></table></div>
 </body>
 </html>
