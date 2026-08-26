@@ -1,8 +1,8 @@
 # cats-inbox 發版 SOP
 
 **建立日期:** 2026-08-25 17:05
-**最後更新:** 2026-08-26 14:20
-**版本:** v1.1
+**最後更新:** 2026-08-26 20:05
+**版本:** v1.2
 **適用範圍:** cats-inbox 的每一次發版(打 tag → 建映像 → VM 換版)
 **權威依據:** 憲法**第八條**(發版儀式)+ 平台紅線(不用 `latest`、不在正式機建置)
 
@@ -12,19 +12,21 @@
 
 ---
 
-## 0. 現在還沒真的跑過哪些步驟(先講清楚)
+## 0. 哪些步驟真的跑過了、哪些還沒(先講清楚)
 
-🔴 **共通紅線:未實際跑過的不得宣稱通過。** 本 SOP 寫在 T10c,而當時:
+🔴 **共通紅線:未實際跑過的不得宣稱通過。** 本表逐列標狀態,**不留空白**
+——空白會被讀成「應該沒問題」。
 
 | 步驟 | 狀態 |
 |---|---|
-| `release-image.yml` 的三道一致性檢查 | ⏳ **尚未**在真的 Actions 上跑過(本地無 docker daemon、無 GHCR 憑證) |
-| 映像推上 GHCR | ⏳ **尚未**推過任何一版 —— `ghcr.io/fttp0165/cats-inbox-api:0.1.0` **目前不存在** |
+| `release-image.yml` 的三道一致性檢查 | ✅ **2026-08-26 首次真的跑過**(`release-image #1`,run `32963503452`,79 秒全過) |
+| 映像推上 GHCR | ✅ **已推** `ghcr.io/fttp0165/cats-inbox-api:0.1.0`(digest `sha256:90d5a6f9…`);`tags/list` 只有 `0.1.0`,**沒有 `latest`** |
 | VM 上 `docker compose up -d` | ⏳ **尚未**(`/opt/cats-inbox` 尚不存在,T11) |
 | gateway 路由與 reload | ⏳ **尚未**(路由權威在 portal,T11 提 PR) |
 
-⚠ 也就是說:**第一次發版就是這份 SOP 的第一次演練**。第 1 步因此是「確認額度」,
-而不是「打 tag」。
+⚠ 前兩列在 T10c 當時都是 ⏳,而 **Benny 2026-08-26 19:28 推 `v0.1.0` 之後 82 秒
+它們就變成假的** —— 回寫紀錄見 `docs/dev-logs/2026-08-26_D03_首次發版實測與回寫.md`。
+🔴 **後兩列仍然沒跑過**,所以第 4 節到 T11 完成前都用不到。
 
 ---
 
@@ -86,6 +88,21 @@ git push origin v0.2.0
 ⚠ 建置失敗時**不要重推同一個 tag**(第八條5)——修好之後用
 `workflow_dispatch` 手動補建,或發下一個 patch 版。
 
+⏱ **實測耗時(v0.1.0,`release-image #1`):整趟 79 秒** ——
+建置 42s、冒煙 2s、推送 7s,其餘是 setup。額度上這是一次可以接受的花費。
+🔴 **綠燈看不出來的兩件事,要離開 GitHub 才驗得到**(v0.1.0 都實測過):
+
+```bash
+# 在任何有網路的機器上;不需要登入,也不需要 docker
+TOK=$(curl -s "https://ghcr.io/token?scope=repository%3Afttp0165%2Fcats-inbox-api%3Apull&service=ghcr.io" \
+      | python3 -c "import sys,json;print(json.load(sys.stdin)['token'])")
+curl -s -H "Authorization: Bearer $TOK" https://ghcr.io/v2/fttp0165/cats-inbox-api/tags/list
+```
+
+① **有沒有誤推 `latest`** —— workflow success 不會告訴你,要問 registry
+(v0.1.0 實測:`{"tags":["0.1.0"]}`);
+② **別人拉不拉得到** —— 見第 4 節開頭。
+
 ---
 
 ## 3. 寫 Release(在 **GitHub UI**)
@@ -122,6 +139,15 @@ git push origin v0.2.0
 ## 4. VM 換版(在 **CATS VM**)
 
 ⚠ **這一節在 T11 完成前都用不到**(`/opt/cats-inbox` 尚不存在)。
+
+✅ **VM 端不需要 `docker login ghcr.io`。** 2026-08-26 實測:以**匿名** token 打
+`ghcr.io/v2/fttp0165/cats-inbox-api/manifests/0.1.0` 回 **HTTP 200**(repo 為 public,
+套件跟著公開)。
+🔴 **這件事值得專門驗一次**:GHCR 的**新套件預設是 private**,而 private 的症狀是
+VM 上 `docker compose pull` 回 `unauthorized` —— 出現的時機與 T10c 想擋掉的
+`manifest unknown` 一模一樣(**低峰窗口、gateway 正等著 reload**),而
+「要先 `docker login`」這一步當時不在任何一份部署文件裡。
+⚠ 哪一天套件被改成 private,這一節就要加回 `docker login`;判斷方式是第 2 節那段 curl。
 
 > 🖥️ **在哪執行:** Cats VM(ssh 進去)· 工作目錄 /opt/cats-inbox
 > 📄 **編輯哪個檔:** /opt/cats-inbox/docker-compose.yml(把映像 tag 改成本版)
@@ -169,5 +195,6 @@ sudo docker exec portal-gateway nginx -s reload
 
 | 版本 | 日期 | 修改人 | 摘要 |
 |---|---|---|---|
+| v1.2 | 2026-08-26 | Benny | **首次發版實測回寫(D03)**。§0 前兩列 ⏳ → ✅:`release-image #1`(run `32963503452`)**79 秒全過**、映像 `ghcr.io/fttp0165/cats-inbox-api:0.1.0` 已在 GHCR(digest `sha256:90d5a6f9…`);🔴 **後兩列仍然是 ⏳**(VM 部署、gateway 路由),節標題由「現在還沒真的跑過哪些步驟」改為「哪些真的跑過了、哪些還沒」並要求**逐列標狀態不留空白**(空白會被讀成「應該沒問題」)。§2 新增**離開 GitHub 才驗得到的兩件事**與可直接貼的匿名 curl:①有沒有誤推 `latest`(workflow success 不會告訴你,v0.1.0 實測 `{"tags":["0.1.0"]}`)②別人拉不拉得到。§4 新增 ✅ **VM 端不需要 `docker login`**(匿名 manifest 回 200)—— 🔴 這件事值得專門驗一次,因為 **GHCR 新套件預設 private**,而 private 的症狀是 `docker compose pull` 回 `unauthorized`,出現時機與 `manifest unknown` 一模一樣(低峰窗口、gateway 等著 reload),而「要先 login」當時不在任何部署文件裡 |
 | v1.1 | 2026-08-26 | Benny | **改用憲法 v1.5 的新指令位置格式**(D02)。五處指令區塊由 `【機器】【路徑】【專案】` 改為 `> 🖥️ 在哪執行` 引言;🔴 §1 原本把要改的檔藏在指令裡(`$EDITOR app/__init__.py`)—— 現在改成**兩行 `📄 編輯哪個檔` 明列完整路徑**,因為相對路徑要讀的人自己推,而推錯不會有錯誤訊息(改到另一個 repo 裡同名的檔,測試照樣綠);§4 的 gateway reload 改用**第九條13 的 `🏷️ 動到誰的東西`** —— 那個指令的工作目錄根本不重要,而動的是 portal 擁有的全 VM 唯一入口 |
 | v1.0 | 2026-08-25 | Benny | 初版(T10c)。把憲法第八條變成可照做的五節:發版前(改**兩個**檔案的版本號、跑含 PG 的全測試、migration 雙向演練)、打 tag(workflow 自動驗三道一致性)、寫 Release(四段模板逐段給例)、VM 換版(🔴 兩段指令分屬**兩個 repo 兩個目錄**,後者動的是全 VM 唯一的 gateway)、發版前一分鐘五項檢查。🔴 §0 誠實列出**目前還沒真的跑過**的四個步驟(workflow 沒在真 Actions 上跑過、映像從未推過、VM 目錄還不存在、gateway 路由未提 PR)——第一次發版就是這份 SOP 的第一次演練,故第 1 步是「確認額度」而不是「打 tag」 |

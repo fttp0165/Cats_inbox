@@ -37,13 +37,13 @@ figure.svg svg { max-width:100%; height:auto; }
 </head>
 <body>
 <h1>cats-inbox 發版 SOP</h1>
-<p><strong>建立日期:</strong> 2026-08-25 17:05<br><strong>最後更新:</strong> 2026-08-26 14:20<br><strong>版本:</strong> v1.1<br><strong>適用範圍:</strong> cats-inbox 的每一次發版(打 tag → 建映像 → VM 換版)<br><strong>權威依據:</strong> 憲法<strong>第八條</strong>(發版儀式)+ 平台紅線(不用 <code>latest</code>、不在正式機建置)</p>
+<p><strong>建立日期:</strong> 2026-08-25 17:05<br><strong>最後更新:</strong> 2026-08-26 20:05<br><strong>版本:</strong> v1.2<br><strong>適用範圍:</strong> cats-inbox 的每一次發版(打 tag → 建映像 → VM 換版)<br><strong>權威依據:</strong> 憲法<strong>第八條</strong>(發版儀式)+ 平台紅線(不用 <code>latest</code>、不在正式機建置)</p>
 <blockquote><p>本文把第八條變成一份<strong>照著做就會對</strong>的清單。<br>🔴 憲法寫了「content 必含四段」,而在本文之前沒有任何清單把它變成步驟<br>—— 那條規則就只在有人記得的時候生效。</p></blockquote>
 <hr>
-<h2>0. 現在還沒真的跑過哪些步驟(先講清楚)</h2>
-<p>🔴 <strong>共通紅線:未實際跑過的不得宣稱通過。</strong> 本 SOP 寫在 T10c,而當時:</p>
-<div class="tablewrap"><table><thead><tr><th>步驟</th><th>狀態</th></tr></thead><tbody><tr><td><code>release-image.yml</code> 的三道一致性檢查</td><td>⏳ <strong>尚未</strong>在真的 Actions 上跑過(本地無 docker daemon、無 GHCR 憑證)</td></tr><tr><td>映像推上 GHCR</td><td>⏳ <strong>尚未</strong>推過任何一版 —— <code>ghcr.io/fttp0165/cats-inbox-api:0.1.0</code> <strong>目前不存在</strong></td></tr><tr><td>VM 上 <code>docker compose up -d</code></td><td>⏳ <strong>尚未</strong>(<code>/opt/cats-inbox</code> 尚不存在,T11)</td></tr><tr><td>gateway 路由與 reload</td><td>⏳ <strong>尚未</strong>(路由權威在 portal,T11 提 PR)</td></tr></tbody></table></div>
-<p>⚠ 也就是說:<strong>第一次發版就是這份 SOP 的第一次演練</strong>。第 1 步因此是「確認額度」,<br>而不是「打 tag」。</p>
+<h2>0. 哪些步驟真的跑過了、哪些還沒(先講清楚)</h2>
+<p>🔴 <strong>共通紅線:未實際跑過的不得宣稱通過。</strong> 本表逐列標狀態,<strong>不留空白</strong><br>——空白會被讀成「應該沒問題」。</p>
+<div class="tablewrap"><table><thead><tr><th>步驟</th><th>狀態</th></tr></thead><tbody><tr><td><code>release-image.yml</code> 的三道一致性檢查</td><td>✅ <strong>2026-08-26 首次真的跑過</strong>(<code>release-image #1</code>,run <code>32963503452</code>,79 秒全過)</td></tr><tr><td>映像推上 GHCR</td><td>✅ <strong>已推</strong> <code>ghcr.io/fttp0165/cats-inbox-api:0.1.0</code>(digest <code>sha256:90d5a6f9…</code>);<code>tags/list</code> 只有 <code>0.1.0</code>,<strong>沒有 <code>latest</code></strong></td></tr><tr><td>VM 上 <code>docker compose up -d</code></td><td>⏳ <strong>尚未</strong>(<code>/opt/cats-inbox</code> 尚不存在,T11)</td></tr><tr><td>gateway 路由與 reload</td><td>⏳ <strong>尚未</strong>(路由權威在 portal,T11 提 PR)</td></tr></tbody></table></div>
+<p>⚠ 前兩列在 T10c 當時都是 ⏳,而 **Benny 2026-08-26 19:28 推 <code>v0.1.0</code> 之後 82 秒<br>它們就變成假的** —— 回寫紀錄見 <code>docs/dev-logs/2026-08-26_D03_首次發版實測與回寫.md</code>。<br>🔴 <strong>後兩列仍然沒跑過</strong>,所以第 4 節到 T11 完成前都用不到。</p>
 <hr>
 <h2>1. 發版前(在<strong>開發者本機</strong>)</h2>
 <p><strong>① 確認 Actions 額度還夠</strong></p>
@@ -66,6 +66,12 @@ git push origin v0.2.0</code></pre>
 <p>推上去之後 <code>release-image.yml</code> 會自動:</p>
 <ol><li>驗 <strong>git tag == <code>__version__</code> == compose 的 tag</strong>(任一不符即失敗);</li><li>建映像、<strong>先跑起來</strong>驗 <code>/inbox/health</code> 回報的版本與 non-root;</li><li>推 <code>ghcr.io/fttp0165/cats-inbox-api:0.2.0</code>。</li></ol>
 <p>🔴 <strong>不會推 <code>latest</code>。</strong> <code>latest</code> 讓同一個 tag 在不同時間指向不同東西,<br>回滾時你不知道要回到哪裡。<br>⚠ 建置失敗時<strong>不要重推同一個 tag</strong>(第八條5)——修好之後用<br><code>workflow_dispatch</code> 手動補建,或發下一個 patch 版。</p>
+<p>⏱ <strong>實測耗時(v0.1.0,<code>release-image #1</code>):整趟 79 秒</strong> ——<br>建置 42s、冒煙 2s、推送 7s,其餘是 setup。額度上這是一次可以接受的花費。<br>🔴 <strong>綠燈看不出來的兩件事,要離開 GitHub 才驗得到</strong>(v0.1.0 都實測過):</p>
+<pre><code># 在任何有網路的機器上;不需要登入,也不需要 docker
+TOK=$(curl -s "https://ghcr.io/token?scope=repository%3Afttp0165%2Fcats-inbox-api%3Apull&amp;service=ghcr.io" \
+      | python3 -c "import sys,json;print(json.load(sys.stdin)['token'])")
+curl -s -H "Authorization: Bearer $TOK" https://ghcr.io/v2/fttp0165/cats-inbox-api/tags/list</code></pre>
+<p>① <strong>有沒有誤推 <code>latest</code></strong> —— workflow success 不會告訴你,要問 registry<br>(v0.1.0 實測:<code>{"tags":["0.1.0"]}</code>);<br>② <strong>別人拉不拉得到</strong> —— 見第 4 節開頭。</p>
 <hr>
 <h2>3. 寫 Release(在 <strong>GitHub UI</strong>)</h2>
 <p><strong>title 格式:</strong> <code>vX.Y.Z — 一句話重點</code></p>
@@ -91,6 +97,7 @@ git push origin v0.2.0</code></pre>
 <hr>
 <h2>4. VM 換版(在 <strong>CATS VM</strong>)</h2>
 <p>⚠ <strong>這一節在 T11 完成前都用不到</strong>(<code>/opt/cats-inbox</code> 尚不存在)。</p>
+<p>✅ <strong>VM 端不需要 <code>docker login ghcr.io</code>。</strong> 2026-08-26 實測:以<strong>匿名</strong> token 打<br><code>ghcr.io/v2/fttp0165/cats-inbox-api/manifests/0.1.0</code> 回 <strong>HTTP 200</strong>(repo 為 public,<br>套件跟著公開)。<br>🔴 <strong>這件事值得專門驗一次</strong>:GHCR 的<strong>新套件預設是 private</strong>,而 private 的症狀是<br>VM 上 <code>docker compose pull</code> 回 <code>unauthorized</code> —— 出現的時機與 T10c 想擋掉的<br><code>manifest unknown</code> 一模一樣(<strong>低峰窗口、gateway 正等著 reload</strong>),而<br>「要先 <code>docker login</code>」這一步當時不在任何一份部署文件裡。<br>⚠ 哪一天套件被改成 private,這一節就要加回 <code>docker login</code>;判斷方式是第 2 節那段 curl。</p>
 <blockquote><p>🖥️ <strong>在哪執行:</strong> Cats VM(ssh 進去)· 工作目錄 /opt/cats-inbox<br>📄 <strong>編輯哪個檔:</strong> /opt/cats-inbox/docker-compose.yml(把映像 tag 改成本版)</p></blockquote>
 <pre><code># ① 改 tag 後 pull —— 🔴 不在正式機 `git pull &amp;&amp; build`(平台紅線)
 sudo sed -i 's|cats-inbox-api:.*|cats-inbox-api:0.2.0|' docker-compose.yml
@@ -108,6 +115,6 @@ curl -s http://127.0.0.1:8080/inbox/health   # 容器內部;version 應為 0.2.0
 <div class="tablewrap"><table><thead><tr><th>#</th><th>檢查</th><th>不做的後果</th></tr></thead><tbody><tr><td>1</td><td><code>__version__</code> 與 compose 的 tag 都改成本版了</td><td>部署舊映像而 health 回報舊版本,<strong>看起來完全一致</strong></td></tr><tr><td>2</td><td>測試全綠,且 migration 那 13 項<strong>不是 skipped</strong></td><td>「93 passed」與「全部跑過」在輸出上長得一樣</td></tr><tr><td>3</td><td>有 migration 的版本已本機 up→down→up</td><td>回滾時才發現 downgrade 是空的</td></tr><tr><td>4</td><td>Release 四段都寫了,且未跑過的如實標未跑過</td><td>讀的人拿它當現況,而它看起來很完整</td></tr><tr><td>5</td><td>Actions 額度還夠</td><td>打了 tag 才發現建不出來,而 tag 不能重發</td></tr></tbody></table></div>
 <hr>
 <h2>版本歷史</h2>
-<div class="tablewrap"><table><thead><tr><th>版本</th><th>日期</th><th>修改人</th><th>摘要</th></tr></thead><tbody><tr><td>v1.1</td><td>2026-08-26</td><td>Benny</td><td><strong>改用憲法 v1.5 的新指令位置格式</strong>(D02)。五處指令區塊由 <code>【機器】【路徑】【專案】</code> 改為 <code>&gt; 🖥️ 在哪執行</code> 引言;🔴 §1 原本把要改的檔藏在指令裡(<code>$EDITOR app/__init__.py</code>)—— 現在改成<strong>兩行 <code>📄 編輯哪個檔</code> 明列完整路徑</strong>,因為相對路徑要讀的人自己推,而推錯不會有錯誤訊息(改到另一個 repo 裡同名的檔,測試照樣綠);§4 的 gateway reload 改用<strong>第九條13 的 <code>🏷️ 動到誰的東西</code></strong> —— 那個指令的工作目錄根本不重要,而動的是 portal 擁有的全 VM 唯一入口</td></tr><tr><td>v1.0</td><td>2026-08-25</td><td>Benny</td><td>初版(T10c)。把憲法第八條變成可照做的五節:發版前(改<strong>兩個</strong>檔案的版本號、跑含 PG 的全測試、migration 雙向演練)、打 tag(workflow 自動驗三道一致性)、寫 Release(四段模板逐段給例)、VM 換版(🔴 兩段指令分屬<strong>兩個 repo 兩個目錄</strong>,後者動的是全 VM 唯一的 gateway)、發版前一分鐘五項檢查。🔴 §0 誠實列出<strong>目前還沒真的跑過</strong>的四個步驟(workflow 沒在真 Actions 上跑過、映像從未推過、VM 目錄還不存在、gateway 路由未提 PR)——第一次發版就是這份 SOP 的第一次演練,故第 1 步是「確認額度」而不是「打 tag」</td></tr></tbody></table></div>
+<div class="tablewrap"><table><thead><tr><th>版本</th><th>日期</th><th>修改人</th><th>摘要</th></tr></thead><tbody><tr><td>v1.2</td><td>2026-08-26</td><td>Benny</td><td><strong>首次發版實測回寫(D03)</strong>。§0 前兩列 ⏳ → ✅:<code>release-image #1</code>(run <code>32963503452</code>)<strong>79 秒全過</strong>、映像 <code>ghcr.io/fttp0165/cats-inbox-api:0.1.0</code> 已在 GHCR(digest <code>sha256:90d5a6f9…</code>);🔴 <strong>後兩列仍然是 ⏳</strong>(VM 部署、gateway 路由),節標題由「現在還沒真的跑過哪些步驟」改為「哪些真的跑過了、哪些還沒」並要求<strong>逐列標狀態不留空白</strong>(空白會被讀成「應該沒問題」)。§2 新增<strong>離開 GitHub 才驗得到的兩件事</strong>與可直接貼的匿名 curl:①有沒有誤推 <code>latest</code>(workflow success 不會告訴你,v0.1.0 實測 <code>{"tags":["0.1.0"]}</code>)②別人拉不拉得到。§4 新增 ✅ <strong>VM 端不需要 <code>docker login</code></strong>(匿名 manifest 回 200)—— 🔴 這件事值得專門驗一次,因為 <strong>GHCR 新套件預設 private</strong>,而 private 的症狀是 <code>docker compose pull</code> 回 <code>unauthorized</code>,出現時機與 <code>manifest unknown</code> 一模一樣(低峰窗口、gateway 等著 reload),而「要先 login」當時不在任何部署文件裡</td></tr><tr><td>v1.1</td><td>2026-08-26</td><td>Benny</td><td><strong>改用憲法 v1.5 的新指令位置格式</strong>(D02)。五處指令區塊由 <code>【機器】【路徑】【專案】</code> 改為 <code>&gt; 🖥️ 在哪執行</code> 引言;🔴 §1 原本把要改的檔藏在指令裡(<code>$EDITOR app/__init__.py</code>)—— 現在改成<strong>兩行 <code>📄 編輯哪個檔</code> 明列完整路徑</strong>,因為相對路徑要讀的人自己推,而推錯不會有錯誤訊息(改到另一個 repo 裡同名的檔,測試照樣綠);§4 的 gateway reload 改用<strong>第九條13 的 <code>🏷️ 動到誰的東西</code></strong> —— 那個指令的工作目錄根本不重要,而動的是 portal 擁有的全 VM 唯一入口</td></tr><tr><td>v1.0</td><td>2026-08-25</td><td>Benny</td><td>初版(T10c)。把憲法第八條變成可照做的五節:發版前(改<strong>兩個</strong>檔案的版本號、跑含 PG 的全測試、migration 雙向演練)、打 tag(workflow 自動驗三道一致性)、寫 Release(四段模板逐段給例)、VM 換版(🔴 兩段指令分屬<strong>兩個 repo 兩個目錄</strong>,後者動的是全 VM 唯一的 gateway)、發版前一分鐘五項檢查。🔴 §0 誠實列出<strong>目前還沒真的跑過</strong>的四個步驟(workflow 沒在真 Actions 上跑過、映像從未推過、VM 目錄還不存在、gateway 路由未提 PR)——第一次發版就是這份 SOP 的第一次演練,故第 1 步是「確認額度」而不是「打 tag」</td></tr></tbody></table></div>
 </body>
 </html>

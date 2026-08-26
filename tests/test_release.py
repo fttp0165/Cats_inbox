@@ -157,8 +157,44 @@ def test_release_sop_exists_with_four_required_sections():
     for section in ("本版內容", "對現有資料的影響", "部署注意", "測試"):
         assert f"## {section}" in text, f"SOP 缺第八條的必含**段落標題**:## {section}"
     assert "vX.Y.Z" in text, "SOP 沒有寫出 title 格式"
-    # 🔴 SOP 必須誠實標註 workflow 尚未真的跑過(共通紅線:未跑過不得宣稱通過)
-    assert "尚未" in text or "未實際" in text, "🔴 SOP 沒有標註哪些步驟還沒真的跑過"
+
+
+def test_release_sop_keeps_honest_status_table():
+    """SOP 的 §0 必須留著那張「哪些跑過了、哪些還沒」的表,且**每列都帶狀態記號**。
+
+    🔴 這一條取代原本的 `assert "尚未" in text`(D03 改寫)。原斷言釘的是一個
+       **當時為真的暫時狀態** —— T10c 寫下它時四件事全都沒跑過。
+       它會在四件事**全部完成**的那天才紅,而那天的正確反應是刪掉 §0;
+       於是人會把「尚未」三個字補回文件裡讓測試閉嘴,**文件反而變成假的**。
+    ⚠ 所以改成釘**不會到期的性質**:那張表必須存在,而且不准有哪一列
+      沒有狀態記號 —— 空白會被讀成「應該沒問題」,而它可能是「沒人去看」。
+      「哪一件還沒跑」交給文件自己講,測試只保證**這張誠實表不會消失**。
+    """
+    text = (ROOT / "docs" / "發版SOP.md").read_text(encoding="utf-8")
+    lines = text.splitlines()
+
+    # §0 的節標題:允許標題文字改寫,但那一節必須還在(以 `## 0.` 為錨)
+    starts = [i for i, ln in enumerate(lines) if ln.startswith("## 0.")]
+    assert starts, "🔴 發版 SOP 少了 §0 那張「哪些跑過了、哪些還沒」的表"
+
+    # 取 §0 到下一個 `## ` 之間的表格資料列(跳過表頭與分隔線)
+    start = starts[0]
+    end = next(
+        (i for i in range(start + 1, len(lines)) if lines[i].startswith("## ")),
+        len(lines),
+    )
+    rows = [
+        ln for ln in lines[start:end]
+        if ln.startswith("|") and set(ln) - set("|-: ")  # 排除 |---|---| 分隔線
+    ]
+    assert len(rows) >= 4, (
+        f"🔴 §0 的表只有 {len(rows)} 列(含表頭)—— 四個步驟至少要各佔一列"
+    )
+    # 第一列是表頭,其餘每一列都必須帶 ✅ 或 ⏳
+    for row in rows[1:]:
+        assert "✅" in row or "⏳" in row, (
+            f"🔴 §0 有一列沒帶狀態記號(✅ 已跑過 / ⏳ 尚未):{row.strip()[:60]}"
+        )
 
 
 # ═══════════════════════════════════════════════════════════════════
