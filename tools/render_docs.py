@@ -47,6 +47,7 @@ TARGETS = [
     ROOT / "docs" / "契約對齊盤點_v3.3.md",
     ROOT / "docs" / "架構說明.md",
     ROOT / "docs" / "發版SOP.md",
+    ROOT / "docs" / "進度表.md",
     ROOT / "README.md",
 ]
 

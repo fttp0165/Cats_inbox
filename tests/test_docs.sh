@@ -124,6 +124,65 @@ ls docs/dev-logs/*T00* >/dev/null 2>&1 && ok "T00 開發日誌存在" \
   || ng "docs/dev-logs/" "缺 T00 日誌(第六條)"
 grep -q "^\.env$" .gitignore 2>/dev/null && ok ".gitignore 含 .env" \
   || ng ".gitignore" "未忽略 .env(共通紅線)"
+# ── 🔴 進度表與任務表的狀態必須一致(D04)────────────────────────────
+# 進度表**複製**了任務表的狀態欄,而複製會漂移。更麻煩的是進度表是唯一一份
+# **設計上就要給人掃一眼就信**的文件 —— 它錯的時候傷害最大。
+# 🔴 這條擋的是「更新了一邊忘了另一邊」,而那是實際會發生的形狀。
+#    ⚠ 它擋不住「兩邊一起寫錯」,那條路仍然靠人。
+#    ⚠ 它在寫的當天就抓到三個錯的數字(以為 17 個 T 任務 / 完成 14 / 未動工 5,
+#      實際 23 個 T 列 / 完成 21 / 未完成 6)—— 拆分出來的
+#      T03b、T09b、T10b、T10c、T11a、T11b 六列被漏數。
+echo "[7] 進度表與任務表的狀態一致(D04)"
+STATUS_CMP="$("$PY" - <<'PY'
+import re, pathlib
+root = pathlib.Path(".")
+
+def rows():
+    """自任務表抽出 (編號, 是否完成)。以最後一欄有沒有 ✅ 判定。"""
+    for ln in (root / "docs" / "任務表.md").read_text(encoding="utf-8").splitlines():
+        if not ln.startswith("|") or set(ln) <= set("|-: "):
+            continue
+        c = [x.strip() for x in ln.strip("|").split("|")]
+        if len(c) < 7 or c[0] in ("編號", "版本"):
+            continue
+        num = re.sub(r"[*`]", "", c[0])
+        if re.match(r"^(T\d|D\d)", num):
+            yield num, ("✅" in c[-1])
+
+table = list(rows())
+# 🔴 抽取壞掉時清單會變空,而**空清單的比對是全綠的** —— 先斷言數量下限。
+if len(table) < 20:
+    print(f"NG 只從任務表抽到 {len(table)} 列 —— 抽取壞了,這條等於沒測")
+    raise SystemExit
+want_done = [n for n, d in table if d]
+want_todo = [n for n, d in table if not d]
+
+prog = (root / "docs" / "進度表.md").read_text(encoding="utf-8")
+
+def listed(label):
+    m = re.search(rf"^\*\*{label}:\*\*(.+)$", prog, re.M)
+    if not m:
+        return None
+    return [x.strip() for x in m.group(1).replace("`", "").split("·") if x.strip()]
+
+got_done, got_todo = listed("已完成"), listed("未完成")
+if got_done is None or got_todo is None:
+    print("NG 進度表缺「已完成:」或「未完成:」那一行(守門靠它比對)")
+    raise SystemExit
+for label, want, got in (("已完成", want_done, got_done), ("未完成", want_todo, got_todo)):
+    if want != got:
+        miss = [x for x in want if x not in got]
+        extra = [x for x in got if x not in want]
+        print(f"NG 進度表的「{label}」與任務表不符 —— 少了 {miss or '無'};多了 {extra or '無'}")
+        raise SystemExit
+print(f"OK 進度表與任務表逐項相符(完成 {len(want_done)} / 未完成 {len(want_todo)})")
+PY
+)"
+case "$STATUS_CMP" in
+  OK*) ok "${STATUS_CMP#OK }" ;;
+  *)   ng "docs/進度表.md" "${STATUS_CMP#NG }" ;;
+esac
+
 # IdP 已定案 Keycloak(portal D1);任何殘留 Authentik 都是過期文案
 if grep -riq "authentik" --include="*.md" --include="*.py" --include="*.html" . 2>/dev/null; then
   ng "repo" "殘留 Authentik 字樣(IdP 已定案 Keycloak)"
