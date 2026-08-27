@@ -1,8 +1,8 @@
 # cats-inbox 發版 SOP
 
 **建立日期:** 2026-08-25 17:05
-**最後更新:** 2026-08-27 14:55
-**版本:** v1.3
+**最後更新:** 2026-08-27 17:10
+**版本:** v1.4
 **適用範圍:** cats-inbox 的每一次發版(打 tag → 建映像 → VM 換版)
 **權威依據:** 憲法**第八條**(發版儀式)+ 平台紅線(不用 `latest`、不在正式機建置)
 
@@ -19,8 +19,8 @@
 
 | 步驟 | 狀態 |
 |---|---|
-| `release-image.yml` 的三道一致性檢查 | ✅ **2026-08-26 首次真的跑過**(`release-image #1`,run `32963503452`,79 秒全過) |
-| 映像推上 GHCR | ✅ **已推** `ghcr.io/fttp0165/cats-inbox-api:0.1.0`(digest `sha256:90d5a6f9…`);`tags/list` 只有 `0.1.0`,**沒有 `latest`** |
+| `release-image.yml` 的三道一致性檢查 | ✅ **已跑過兩次**(`#1` 2026-08-26 79 秒、`#2` 2026-08-27 60 秒,皆 8 步全過) |
+| 映像推上 GHCR | ✅ **已推兩版** —— `0.1.0`(`release-image #1`,79 秒)與 **`0.1.1`**(`#2`,60 秒);`tags/list` 回 `["0.1.0","0.1.1"]`,**沒有 `latest`** |
 | VM 上 `docker compose up -d` | ⏳ **尚未**(`/opt/cats-inbox` 尚不存在,**T11b**;指令稿見 `docs/T11b上線指令稿.md`) |
 | gateway 路由與 reload | ⏳ **尚未** —— 設定**已入庫但整段是註解**(T11a ✅);啟用是 **T11b** |
 
@@ -179,8 +179,6 @@ sudo docker exec portal-gateway nginx -s reload
 
 ---
 
----
-
 ## 4.1 migration 在哪裡下(T10d 之後才成立)
 
 🔴 **`0.1.0` 的映像跑不了 migration** —— `Dockerfile` 當時只 `COPY app/`,
@@ -230,6 +228,7 @@ sudo docker exec cats-inbox-pg psql -U cats_inbox -d cats_inbox -c '\dt'
 | 3 | 有 migration 的版本已本機 up→down→up | 回滾時才發現 downgrade 是空的 |
 | 4 | Release 四段都寫了,且未跑過的如實標未跑過 | 讀的人拿它當現況,而它看起來很完整 |
 | 5 | Actions 額度還夠 | 打了 tag 才發現建不出來,而 tag 不能重發 |
+| 6 | 🔴 **Release 頁真的建出來了**(不是「內容寫好了」而是**頁面存在**)| **裸 tag 的狀態會持續**,而第八條1 明訂不得只推裸 tag。⚠ 2026-08-27 實測發生過一次:tag 推成功、CI 綠、映像上了 GHCR,而 Release 頁不存在(API 查回 404)—— 查法:`https://github.com/fttp0165/Cats_inbox/releases/tag/vX.Y.Z` 打不開就是沒建 |
 
 ---
 
@@ -237,6 +236,7 @@ sudo docker exec cats-inbox-pg psql -U cats_inbox -d cats_inbox -c '\dt'
 
 | 版本 | 日期 | 修改人 | 摘要 |
 |---|---|---|---|
+| v1.4 | 2026-08-27 | Benny | **§0 前兩列更新為兩次實測**:三道一致性檢查已跑過 `#1`(79 秒)與 `#2`(60 秒);映像**已推兩版** `0.1.0` 與 `0.1.1`,`tags/list` 回 `["0.1.0","0.1.1"]` **無 `latest`**。⚠ 順帶記一個 SOP 本身的教訓(已落到 `T11b上線指令稿` v1.3):第 2 節「打 tag」與第 3 節「寫 Release」**是兩節**,而走本機路徑的人推完 tag 就會停 —— **裸 tag 的狀態會持續**,而第八條1 明訂不得只推裸 tag。2026-08-27 實測發生過一次 |
 | v1.3 | 2026-08-27 | Benny | **新增 §4.1「migration 在哪裡下」(T10d)**。🔴 本節補的是一個**沒有地方可以下那行指令**的缺口:`0.1.0` 的 `Dockerfile` 只 `COPY app/`,映像裡**沒有 `alembic.ini` 也沒有 `alembic/versions/`**,而 `0.1.0` 的 Release 頁卻明寫「要跑 migration:是 —— `alembic upgrade head`」;應用又刻意不做 `create_all()`、平台紅線禁止在正式機 build —— **三份文件都對,而照 Release 頁做不到**。`0.1.1` 起映像自帶 migration 腳本,本節才成立。三步:先 `pg_dump` 備份(共通紅線,不因「這次沒資料」而豁免)→ `docker exec … alembic upgrade head` → `psql -c '\\dt'` 驗五張表真的在。⚠ 症狀難查的理由一併寫進去:健康檢查刻意不查 DB,所以容器正常啟動、health 200、gateway 套用成功,**第一個真人打開收件匣時才 500** |
 | v1.2 | 2026-08-26 | Benny | **首次發版實測回寫(D03)**。§0 前兩列 ⏳ → ✅:`release-image #1`(run `32963503452`)**79 秒全過**、映像 `ghcr.io/fttp0165/cats-inbox-api:0.1.0` 已在 GHCR(digest `sha256:90d5a6f9…`);🔴 **後兩列仍然是 ⏳**(VM 部署、gateway 路由),節標題由「現在還沒真的跑過哪些步驟」改為「哪些真的跑過了、哪些還沒」並要求**逐列標狀態不留空白**(空白會被讀成「應該沒問題」)。§2 新增**離開 GitHub 才驗得到的兩件事**與可直接貼的匿名 curl:①有沒有誤推 `latest`(workflow success 不會告訴你,v0.1.0 實測 `{"tags":["0.1.0"]}`)②別人拉不拉得到。§4 新增 ✅ **VM 端不需要 `docker login`**(匿名 manifest 回 200)—— 🔴 這件事值得專門驗一次,因為 **GHCR 新套件預設 private**,而 private 的症狀是 `docker compose pull` 回 `unauthorized`,出現時機與 `manifest unknown` 一模一樣(低峰窗口、gateway 等著 reload),而「要先 login」當時不在任何部署文件裡 |
 | v1.1 | 2026-08-26 | Benny | **改用憲法 v1.5 的新指令位置格式**(D02)。五處指令區塊由 `【機器】【路徑】【專案】` 改為 `> 🖥️ 在哪執行` 引言;🔴 §1 原本把要改的檔藏在指令裡(`$EDITOR app/__init__.py`)—— 現在改成**兩行 `📄 編輯哪個檔` 明列完整路徑**,因為相對路徑要讀的人自己推,而推錯不會有錯誤訊息(改到另一個 repo 裡同名的檔,測試照樣綠);§4 的 gateway reload 改用**第九條13 的 `🏷️ 動到誰的東西`** —— 那個指令的工作目錄根本不重要,而動的是 portal 擁有的全 VM 唯一入口 |
