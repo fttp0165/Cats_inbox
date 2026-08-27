@@ -48,6 +48,7 @@ TARGETS = [
     ROOT / "docs" / "架構說明.md",
     ROOT / "docs" / "發版SOP.md",
     ROOT / "docs" / "進度表.md",
+    ROOT / "docs" / "T11b上線指令稿.md",
     ROOT / "README.md",
 ]
 

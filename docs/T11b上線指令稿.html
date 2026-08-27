@@ -1,0 +1,241 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>cats-inbox T11b 上線指令稿(可貼版)</title>
+<style>
+:root { color-scheme: light; }
+body { background:#ffffff; color:#1f2328; margin:0 auto; padding:2rem 1.2rem 4rem;
+       max-width:60rem; line-height:1.65;
+       font-family:-apple-system,"Segoe UI","Noto Sans TC","Microsoft JhengHei",
+                   "PingFang TC",sans-serif; }
+h1 { font-size:1.7rem; border-bottom:2px solid #d0d7de; padding-bottom:.4rem; }
+h2 { font-size:1.35rem; border-bottom:1px solid #d8dee4; padding-bottom:.3rem; margin-top:2.2rem; }
+h3 { font-size:1.12rem; margin-top:1.8rem; }
+h4 { font-size:1rem; margin-top:1.4rem; }
+p, li { overflow-wrap:break-word; }
+a { color:#0b57d0; }
+code { background:#f6f8fa; border:1px solid #e4e8ec; border-radius:4px;
+       padding:.08em .35em; font-size:.92em;
+       font-family:ui-monospace,SFMono-Regular,Consolas,"Noto Sans Mono CJK TC",monospace; }
+pre { background:#f6f8fa; border:1px solid #e4e8ec; border-radius:6px;
+      padding: .8rem 1rem; overflow-x:auto; line-height:1.5; }
+pre code { background:none; border:none; padding:0; }
+blockquote { margin:1rem 0; padding:.5rem 1rem; border-left:4px solid #c9d1d9;
+             background:#f8f9fb; color:#4b535d; }
+blockquote p { margin:.35rem 0; }
+.tablewrap { overflow-x:auto; margin:1rem 0; }
+table { border-collapse:collapse; font-size:.95em; min-width:50%; }
+th, td { border:1px solid #d0d7de; padding:.4rem .65rem; text-align:left; vertical-align:top; }
+th { background:#f6f8fa; }
+tr:nth-child(even) td { background:#fbfcfd; }
+hr { border:none; border-top:1px solid #d0d7de; margin:2rem 0; }
+figure.svg { margin:1.2rem 0; text-align:center; }
+figure.svg svg { max-width:100%; height:auto; }
+</style>
+</head>
+<body>
+<h1>cats-inbox T11b 上線指令稿(可貼版)</h1>
+<p><strong>建立日期:</strong> 2026-08-27 15:00<br><strong>最後更新:</strong> 2026-08-27 15:25<br><strong>版本:</strong> v1.0<br><strong>適用範圍:</strong> T11b —— cats-inbox <strong>首次</strong>上 VM 並掛上統一入口 <code>/inbox/</code><br><strong>權威依據:</strong> 憲法第九條 11/12/13(指令位置標示)、A.3 容器與 gateway 紅線、<br>portal《App服務對齊指南》§3–§4、portal D8 部署形態紅線</p>
+<blockquote><p>🔴 <strong>這份稿沒有被執行過。</strong> T11b 就是它的第一次演練 —— 與發版 SOP 第一版<br>同樣的處境,故第 0 步是「確認前置」而不是「開始貼」。<br>執行中發現與稿不符,依第二條5 <strong>回寫本稿並升版</strong>。</p></blockquote>
+<hr>
+<h2>只有 D 段需要低峰窗口</h2>
+<p>四段裡<strong>只有一段會動到正式站</strong>:</p>
+<div class="tablewrap"><table><thead><tr><th>段</th><th>內容</th><th>需要低峰窗口?</th><th>估時</th></tr></thead><tbody><tr><td><strong>0</strong></td><td>發 <code>v0.1.1</code>(映像要能跑 migration)</td><td>❌</td><td>5 分 + CI 約 80 秒</td></tr><tr><td><strong>A</strong></td><td>VM 建 <code>/opt/cats-inbox</code>、<code>.env</code>、併 secret、拉映像</td><td>❌</td><td>20–30 分</td></tr><tr><td><strong>B</strong></td><td>容器起來、<strong>跑 migration</strong>、驗上游可解析</td><td>❌ <strong>不需要</strong> —— gateway 上還沒有 <code>/inbox/</code> 路由,<strong>沒有任何流量會進來</strong></td><td>15–20 分</td></tr><tr><td><strong>C</strong></td><td>portal repo:解註解 + 白名單 + staging 假上游 → 跑 <code>verify.sh</code></td><td>❌</td><td>30–40 分</td></tr><tr><td><strong>D</strong></td><td><code>ops/gateway-apply.sh</code> 套用 + 冒煙</td><td>✅ <strong>只有這一段</strong></td><td><strong>約 10 分</strong></td></tr></tbody></table></div>
+<p>🔴 <strong>順序不可顛倒。</strong> B 必須在 C 之前 —— 白名單的入場券是 B 的實測結果<br>(portal <code>tests/test_skeleton.sh</code> 的判準是「<strong>VM 上已實測存在</strong>」)。</p>
+<hr>
+<h2>第 0 步:發 <code>v0.1.1</code>(必做,<code>0.1.0</code> 的映像跑不了 migration)</h2>
+<p>🔴 <strong>為什麼不能用 <code>0.1.0</code></strong>:那個映像裡沒有 <code>alembic.ini</code> 也沒有 <code>alembic/versions/</code><br>(T10d),而應用刻意不做 <code>create_all()</code> —— <code>alembic upgrade head</code> 會失敗在<br>「找不到 alembic.ini」。⚠ 症狀是容器正常啟動、health 200、gateway 套用成功,<br><strong>第一個真人打開收件匣時才 500</strong>。</p>
+<p>程式面已備妥(<code>__version__</code> 與 compose 都已是 <code>0.1.1</code>),只剩推 tag:</p>
+<blockquote><p>🖥️ <strong>在哪執行:</strong> WSL(Ubuntu)· 工作目錄 <code>~/Cats_inbox</code> · 分支 <code>claude/cats-inbox-development-plan-ghwd9s</code></p></blockquote>
+<pre><code>git pull origin claude/cats-inbox-development-plan-ghwd9s
+grep -n '__version__' app/__init__.py          # 必須是 0.1.1
+grep -n 'cats-inbox-api:' docker-compose.yml   # 必須是 0.1.1
+git tag -a v0.1.1 -m "v0.1.1"
+git push origin v0.1.1</code></pre>
+<p><strong>怎麼知道成功了:</strong> GitHub Actions 的 <code>release-image</code> 綠燈(約 80 秒),且</p>
+<pre><code>TOK=$(curl -s "https://ghcr.io/token?scope=repository%3Afttp0165%2Fcats-inbox-api%3Apull&amp;service=ghcr.io" \
+      | python3 -c "import sys,json;print(json.load(sys.stdin)['token'])")
+curl -s -H "Authorization: Bearer $TOK" https://ghcr.io/v2/fttp0165/cats-inbox-api/tags/list
+# 期望:{"name":"fttp0165/cats-inbox-api","tags":["0.1.0","0.1.1"]}  —— 🔴 不得有 latest</code></pre>
+<p><strong>不成功怎麼辦:</strong> 🔴 <strong>不要重推 <code>v0.1.1</code></strong>(第八條5)。用 GitHub UI 的<br><code>workflow_dispatch</code> 手動補建;真的改了程式就發 <code>v0.1.2</code>。</p>
+<p><strong>Release 頁</strong>(第八條1:不得只推裸 tag)—— title 與四段內容:</p>
+<p>&lt;details&gt;<br>&lt;summary&gt;&lt;b&gt;v0.1.1 — 映像自己帶得動 migration&lt;/b&gt;(點開複製 content)&lt;/summary&gt;</p>
+<pre><code>## 本版內容
+- **T10d**:映像帶入 `alembic.ini` 與 `alembic/` —— `0.1.0` 的映像**跑不了 migration**
+- **T11a**:`/inbox/` gateway 設定入 portal(**整段註解**,容器未建故不得生效)
+- **D03 / D04 / D05**:首次發版實測回寫、進度表(+守門)、本上線指令稿
+
+## 對現有資料的影響
+🟢 **程式面不動任何資料。** ⚠ 但本版是讓首次 `alembic upgrade head` **能夠執行**的前提
+——首次部署會建 5 張表(`0001` + `0002`,皆有 backward)。
+🔴 **PG 15 上尚未演練過**(開發機只有 16.13)—— T11b 的 B 段要在 VM 上補這一次。
+
+## 部署注意
+- `.env` **無新增變數**(與 `0.1.0` 相同)。
+- **要跑 migration:是** —— `docker exec cats-inbox-api alembic upgrade head`。
+  🔴 **先備份再跑**(共通紅線),步驟見 `docs/發版SOP.md` §4.1。
+- 換版後的驗證點:`/inbox/health` 回 200 且 `version == 0.1.1`;容器 UID 1000;
+  `docker exec cats-inbox-pg psql -U cats_inbox -d cats_inbox -c '\dt'` 看到 5 張表。
+- ⚠ 這一版**仍未掛上統一入口** —— `https://catsapp.sporton.com.tw/inbox/health` 會 404,
+  那是預期的(路由設定在 portal repo 裡但整段是註解;啟用是 T11b 的 C/D 段)。
+
+## 測試
+- **247 項全綠**:文件層 64 + pytest 183(含 **13 項需真 PostgreSQL** 的 migration 測試)
+- 🔴 **尚未跑過的**:真人端到端登入、容器內 discovery 連通、**PG 15** migration 演練、
+  gateway 路由冒煙 —— 四項都在 T11b。</code></pre>
+<p>&lt;/details&gt;</p>
+<hr>
+<h2>A 段:VM 前置(不需要低峰窗口)</h2>
+<h3>A-1 建部署目錄並放入 compose</h3>
+<blockquote><p>🖥️ <strong>在哪執行:</strong> Cats VM(ssh 進去)· 工作目錄 <code>/opt</code></p></blockquote>
+<pre><code>sudo mkdir -p /opt/cats-inbox
+sudo chown "$USER":"$USER" /opt/cats-inbox</code></pre>
+<p>🔴 <strong>不在正式機 <code>git clone</code></strong>(平台紅線:部署是改 tag 後 pull,不在正式機<br><code>git pull &amp;&amp; build</code>)。compose 與 <code>.env</code> 是<strong>手動放</strong>的兩個檔:</p>
+<blockquote><p>🖥️ <strong>在哪執行:</strong> Cats VM(ssh 進去)· 工作目錄 <code>/opt/cats-inbox</code><br>📄 <strong>編輯哪個檔:</strong> <code>/opt/cats-inbox/docker-compose.yml</code></p></blockquote>
+<p>把 repo 裡 <code>docker-compose.yml</code> 的內容整份貼進去(<strong>tag 必須是 <code>0.1.1</code></strong>)。</p>
+<h3>A-2 建 <code>.env</code></h3>
+<blockquote><p>🖥️ <strong>在哪執行:</strong> Cats VM(ssh 進去)· 工作目錄 <code>/opt/cats-inbox</code><br>📄 <strong>編輯哪個檔:</strong> <code>/opt/cats-inbox/.env</code></p></blockquote>
+<p>以 repo 的 <code>.env.example</code> 為底,<strong>三個沒有預設值的必填</strong>:</p>
+<div class="tablewrap"><table><thead><tr><th>變數</th><th>從哪裡來</th></tr></thead><tbody><tr><td><code>POSTGRES_PASSWORD</code></td><td>自行產生(<code>openssl rand -base64 24</code>)</td></tr><tr><td><code>INBOX_OIDC_CLIENT_SECRET</code></td><td>🔴 <strong>VM 上的</strong> <code>idp/.env.keycloak.cats-inbox</code>(600)</td></tr><tr><td><code>INBOX_SESSION_SECRET</code></td><td>自行產生(<code>openssl rand -base64 32</code>)</td></tr></tbody></table></div>
+<p>🔴 <strong>client secret 只在那台機器上合併,不要複製出那台機器。</strong></p>
+<p>⚠ <strong><code>INBOX_OIDC_INTERNAL_BASE</code> 必須逐字等於交付檔裡那一行</strong>(<code>http://keycloak:8080/auth</code>,<br><strong>不含 <code>/realms/…</code></strong>)。填錯會組出 <code>/realms/sporton/realms/sporton</code> → discovery 404,<br>而<strong>離線測試全綠,只在第一個真人登入時出現</strong>(T04 記過)。</p>
+<pre><code>chmod 600 /opt/cats-inbox/.env
+grep -c '^INBOX_\|^POSTGRES_' /opt/cats-inbox/.env   # 期望 13</code></pre>
+<h3>A-3 拉映像</h3>
+<blockquote><p>🖥️ <strong>在哪執行:</strong> Cats VM(ssh 進去)· 工作目錄 <code>/opt/cats-inbox</code></p></blockquote>
+<pre><code>sudo docker compose pull</code></pre>
+<p>✅ <strong>不需要 <code>docker login ghcr.io</code></strong> —— 2026-08-26 實測匿名可拉(D03)。</p>
+<p><strong>怎麼知道 A 段成功了:</strong></p>
+<pre><code>sudo docker image inspect ghcr.io/fttp0165/cats-inbox-api:0.1.1 &gt;/dev/null &amp;&amp; echo "image OK"
+sudo docker compose config -q &amp;&amp; echo "compose 語法 OK"</code></pre>
+<p><strong>不成功怎麼退回去:</strong> A 段沒有動任何既有東西 —— <code>sudo rm -rf /opt/cats-inbox</code> 即回到原狀。<br>⚠ <code>manifest unknown</code> = 第 0 步的映像還沒推成功,回去看 Actions。</p>
+<hr>
+<h2>B 段:容器起來 + migration(不需要低峰窗口)</h2>
+<p>🔴 <strong>為什麼這一段安全</strong>:gateway 上<strong>還沒有 <code>/inbox/</code> 路由</strong>(T11a 的設定整段是註解),<br>所以容器起來也不會有任何流量進到它。這一段做錯了只影響自己。</p>
+<h3>B-1 起容器</h3>
+<blockquote><p>🖥️ <strong>在哪執行:</strong> Cats VM(ssh 進去)· 工作目錄 <code>/opt/cats-inbox</code></p></blockquote>
+<pre><code># 先清掉可能殘留的手動 cats-edge 連線(避免 alias 衝突,對齊指南 §3.2)
+sudo docker network disconnect cats-edge cats-inbox-api 2&gt;/dev/null || true
+sudo docker compose up -d
+sudo docker compose ps</code></pre>
+<h3>B-2 🔴 驗網路隔離線(A.3 紅線)</h3>
+<pre><code># 對外容器必須在 cats-edge 上
+sudo docker inspect cats-inbox-api -f '{{range $k,$v := .NetworkSettings.Networks}}{{$k}} {{end}}'
+# 期望:inbox-internal 與 cats-edge 兩個
+
+# 🔴 DB 不得在 cats-edge、不得對主機發布 port
+sudo docker inspect cats-inbox-pg -f '{{range $k,$v := .NetworkSettings.Networks}}{{$k}} {{end}}'
+# 期望:只有 inbox-internal
+sudo docker inspect cats-inbox-pg -f '{{json .NetworkSettings.Ports}}'
+# 期望:{} 或全部沒有 HostPort</code></pre>
+<h3>B-3 備份後跑 migration(🔴 顯式的一步,不在啟動時自動跑)</h3>
+<pre><code>sudo docker exec cats-inbox-pg pg_dump -U cats_inbox cats_inbox \
+  &gt; ~/inbox-before-$(date +%Y%m%d-%H%M).sql
+sudo docker exec cats-inbox-api alembic upgrade head
+sudo docker exec cats-inbox-api alembic current
+sudo docker exec cats-inbox-pg psql -U cats_inbox -d cats_inbox -c '\dt'</code></pre>
+<h3>B-4 🔴 補上 PG 15 的 up→down→up 演練(開發機只有 16.13)</h3>
+<pre><code>sudo docker exec cats-inbox-pg psql -U cats_inbox -d cats_inbox -c 'select version()'  # 應為 15.x
+sudo docker exec cats-inbox-api alembic downgrade base
+sudo docker exec cats-inbox-api alembic upgrade head
+sudo docker exec cats-inbox-pg psql -U cats_inbox -d cats_inbox -c '\dt'   # 5 張表回來</code></pre>
+<p>⚠ 現在庫是空的,所以 <code>downgrade base</code> 沒有資料風險。<strong>上線之後不得再這樣做。</strong></p>
+<h3>B-5 🔴 取得白名單的入場券(C 段要用)</h3>
+<blockquote><p>🖥️ <strong>在哪執行:</strong> Cats VM(ssh 進去)· 工作目錄 <code>/opt/cats-inbox</code><br>🏷️ <strong>動到誰的東西:</strong> cats-portal(在<strong>它的</strong> gateway 容器裡下指令,只讀不改)</p></blockquote>
+<pre><code>sudo docker exec portal-gateway getent hosts cats-inbox-api
+sudo docker exec portal-gateway sh -c \
+  'wget -qO- http://cats-inbox-api:8080/inbox/health || curl -s http://cats-inbox-api:8080/inbox/health'</code></pre>
+<p>🔴 <strong>這兩行的輸出就是 C 段把 <code>cats-inbox-api</code> 加進 <code>KNOWN=</code> 的證據。</strong><br>portal 那份白名單的判準是「<strong>VM 上已實測存在</strong>」,而它自己的註解寫著<br>「加進來卻沒驗過等於自欺」—— <strong>把這兩行的輸出貼進 C 段的 commit message</strong>。</p>
+<h3>B-6 順手把 T03/T04/T06 留下的三項真人驗證做掉</h3>
+<pre><code># ① 壞 code 打 token 端點驗 secret(不需真人登入、不需 gateway 路由;契約 v2.17)
+#    回 400 invalid_grant = secret 正確;invalid_client = secret 錯
+sudo docker exec cats-inbox-api python - &lt;&lt;'PY'
+import os, urllib.request, urllib.parse, json
+base = os.environ["INBOX_OIDC_INTERNAL_BASE"].rstrip("/")
+realm = os.environ["INBOX_OIDC_ISSUER"].rstrip("/").rsplit("/", 1)[-1]
+url = f"{base}/realms/{realm}/protocol/openid-connect/token"
+data = urllib.parse.urlencode({
+    "grant_type": "authorization_code", "code": "deliberately-invalid",
+    "redirect_uri": os.environ["INBOX_PUBLIC_BASE_URL"].rstrip("/") + "/inbox/oidc/callback/",
+    "client_id": os.environ["INBOX_OIDC_CLIENT_ID"],
+    "client_secret": os.environ["INBOX_OIDC_CLIENT_SECRET"],
+}).encode()
+try:
+    urllib.request.urlopen(urllib.request.Request(url, data=data), timeout=10)
+except urllib.error.HTTPError as e:
+    body = json.loads(e.read() or b"{}")
+    print(e.code, body.get("error"))
+    print("✅ secret 正確" if body.get("error") == "invalid_grant"
+          else "🔴 secret 有問題(invalid_client)" if body.get("error") == "invalid_client"
+          else "⚠ 非預期回應,見上一行")
+PY
+
+# ② 容器內 discovery 連得到(擋 INBOX_OIDC_INTERNAL_BASE 填錯那個坑)
+sudo docker exec cats-inbox-api python -c "
+import os,urllib.request,json
+b=os.environ['INBOX_OIDC_INTERNAL_BASE'].rstrip('/')
+r=os.environ['INBOX_OIDC_ISSUER'].rstrip('/').rsplit('/',1)[-1]
+u=f'{b}/realms/{r}/.well-known/openid-configuration'
+d=json.load(urllib.request.urlopen(u,timeout=10))
+print('discovery OK; issuer =',d['issuer'])
+print('🔴 iss 必須等於對外網址:',d['issuer']==os.environ['INBOX_OIDC_ISSUER'])"</code></pre>
+<p>⚠ <strong>真人端到端登入與換帳號冒煙做不到</strong> —— 它們需要 <code>/inbox/</code> 路由,留 D 段之後。</p>
+<p><strong>怎麼知道 B 段成功了:</strong> B-2 三條隔離斷言全過、B-3 看到 5 張表 + <code>alembic_version</code>、<br>B-5 兩行都有輸出、B-6 ① 印「✅ secret 正確」且 ② <code>iss</code> 比對為 <code>True</code>。</p>
+<p><strong>不成功怎麼退回去:</strong></p>
+<pre><code>sudo docker compose down          # 容器停掉;gateway 完全不受影響(還沒有路由)
+sudo docker compose down -v       # ⚠ 連 volume 一起刪(庫是空的才這樣做)</code></pre>
+<hr>
+<h2>C 段:portal repo 改動(不需要低峰窗口)</h2>
+<p>🔴 <strong>這一段在開發者本機做,不在 VM 上做。</strong> 解註解與改白名單是 <strong>portal repo 的改動</strong>;<br>在 VM 上直接改 <code>/opt/cats-portal</code> 的檔案<strong>等於繞過 PR</strong>。<br>⚠ portal 憲法 v1.9 記載的第二次事故正是這一類:VM 在另一條分支上,<code>git pull</code> 回<br>「Already up to date」而設定根本沒變 —— <strong><code>nginx -t</code> 過了、reload 也成功了,但套用完全落空</strong>。</p>
+<h3>C-1 解註解</h3>
+<blockquote><p>🖥️ <strong>在哪執行:</strong> WSL(Ubuntu)· 工作目錄 <code>~/cats-portal</code> · 分支 <code>claude/cats-inbox-development-plan-ghwd9s</code><br>📄 <strong>編輯哪個檔:</strong> <code>~/cats-portal/gateway/nginx/conf.d/default.conf</code><br>🏷️ <strong>動到誰的東西:</strong> cats-portal(全 VM 唯一的 gateway,綁 80/443)</p></blockquote>
+<p>把 <code>▼▼▼</code> 與 <code>▲▲▲</code> 之間<strong>每一行開頭的 <code># </code> 拿掉</strong>。那一區塊裡<strong>只有指令</strong>,<br>所以機械式去掉就是可用的設定(有守門釘住:<code>tests/test_skeleton.sh</code>)。</p>
+<h3>C-2 白名單加入(🔴 B-5 驗過才准加)</h3>
+<blockquote><p>📄 <strong>編輯哪個檔:</strong> <code>~/cats-portal/tests/test_skeleton.sh</code></p></blockquote>
+<p>把 <code>KNOWN='…'</code> 末尾加上 <code>|cats-inbox-api</code>,並在上方註解區<strong>照既有格式</strong>寫下<br>B-5 的實測日期與輸出(upload-program 與 portal-admin 都是這樣記的)。</p>
+<h3>C-3 staging 假上游 + probe</h3>
+<blockquote><p>📄 <strong>編輯哪個檔:</strong> <code>~/cats-portal/gateway/staging/docker-compose.yml</code><br>📄 <strong>編輯哪個檔:</strong> <code>~/cats-portal/gateway/staging/verify.sh</code></p></blockquote>
+<p>compose 比照 <code>upload-program</code> 那個服務加一個 <code>cats-inbox-api</code><br>(<code>image: nginx:alpine</code>、<code>hostname: cats-inbox-api</code>、掛 <code>upstream.conf</code>);<br><code>verify.sh</code> 在 <code>probe /upload/abc …</code> 旁邊加:</p>
+<pre><code>probe /inbox/abc      cats-inbox-api  /inbox/abc</code></pre>
+<p>🔴 <strong>這一行是本次唯一能證明「前綴沒被剝掉」的東西。</strong> <code>proxy_pass</code> 若誤寫成<br><code>…:8080/</code>,上游會收到 <code>/abc</code> 而不是 <code>/inbox/abc</code> —— 症狀是**全站 404 而 gateway<br>這一層完全正常<strong>。⚠ 這一點到目前</strong>只有推理沒有實測**(開發機沒有 nginx)。</p>
+<h3>C-4 跑測試與 staging</h3>
+<blockquote><p>🖥️ <strong>在哪執行:</strong> WSL(Ubuntu)· 工作目錄 <code>~/cats-portal</code> · 分支 <code>claude/cats-inbox-development-plan-ghwd9s</code></p></blockquote>
+<pre><code>bash tests/run-all.sh            # 期望 57 支全綠
+cd gateway/staging &amp;&amp; bash verify.sh &amp;&amp; cd -</code></pre>
+<p><strong>怎麼知道 C 段成功了:</strong> portal 57 支全綠,且 <code>verify.sh</code> 的<br><code>/inbox/abc</code> 那一行回 <code>cats-inbox-api /inbox/abc</code>(<strong>兩個值都要對</strong>)。<br>然後 commit + push + 併 PR。</p>
+<p><strong>不成功怎麼退回去:</strong> <code>git checkout -- gateway tests</code>(還沒 commit 就沒事)。<br>⚠ <strong><code>verify.sh</code> 的 <code>/inbox/abc</code> 沒過就不要往 D 段走</strong> —— 那正是它存在的理由。</p>
+<hr>
+<h2>D 段:低峰窗口(🔴 唯一會動到正式站的一段,約 10 分鐘)</h2>
+<blockquote><p>🖥️ <strong>在哪執行:</strong> Cats VM(ssh 進去)· 工作目錄 <code>/opt/cats-portal</code> · 分支 <code>claude/cats-inbox-development-plan-ghwd9s</code><br>🏷️ <strong>動到誰的東西:</strong> cats-portal(全 VM 唯一的 gateway,綁 80/443 —— PLM 與 AES_KEY 都在它後面)</p></blockquote>
+<h3>D-1 拉到正確的分支,並<strong>驗 commit 對得上</strong></h3>
+<pre><code>git rev-parse --abbrev-ref HEAD          # 🔴 先確認在哪條分支
+git pull origin claude/cats-inbox-development-plan-ghwd9s
+git log --oneline -1                     # 🔴 必須等於 C 段 push 上去的那個 commit
+grep -c '^\s*proxy_pass http://cats-inbox-api:8080;' gateway/nginx/conf.d/default.conf
+# 🔴 期望 1 —— 若是 0,設定還是註解狀態(git pull 拉錯分支的典型症狀)</code></pre>
+<p>⚠ <strong><code>git log</code> 那一行不是形式</strong>:portal 2026-08-03 的事故就是 <code>git pull</code> 回<br>「Already up to date」而設定根本沒變。</p>
+<h3>D-2 套用(一次性容器先驗 → 備份 → 套用 → 驗五條路由,不通自動回滾)</h3>
+<pre><code>bash ops/gateway-apply.sh --check     # 只驗,不套用
+bash ops/gateway-apply.sh             # 驗 + 套用</code></pre>
+<p>🔴 <strong><code>--check</code> 沒過就停手。</strong> 它用一次性容器跑 <code>nginx -t</code>,<strong>不碰正在服務的 gateway</strong> ——<br><code>host not found in upstream "cats-inbox-api"</code> 表示 B 段的容器沒起來或不在 <code>cats-edge</code>。</p>
+<h3>D-3 冒煙(這一段才是 T11b 的驗收)</h3>
+<pre><code>curl -skI https://catsapp.sporton.com.tw/inbox/health | head -1     # 期望 200
+curl -sk  https://catsapp.sporton.com.tw/inbox/health               # version 應為 0.1.1
+curl -skI https://catsapp.sporton.com.tw/inbox   | head -1          # 期望 301 → /inbox/
+# 🔴 既有路由 zero-diff(gateway-apply.sh 已驗過,這裡再看一次)
+for p in / /plm/ /core/ /upload/ /sysadm/; do
+  printf '%s ' "$p"; curl -sk -o /dev/null -w '%{http_code}\n' "https://catsapp.sporton.com.tw$p"
+done</code></pre>
+<p><strong>不成功怎麼退回去:</strong> <code>ops/gateway-apply.sh</code> 的五條路由驗證<strong>不通會自動回滾</strong>。<br>若它自己回滾失敗(它會大聲說),備份在它印出的路徑;手動回復後<br><code>sudo docker exec portal-gateway nginx -s reload</code>。</p>
+<h3>D-4 真人冒煙(§10.7:測前清 cookie / 用無痕)</h3>
+<ol><li>無痕開 <code>https://catsapp.sporton.com.tw/inbox/</code> → 導向 Keycloak → 登入 → 回到收件匣;</li><li>登出 → 換另一個帳號登入 → 🔴 <strong>收件匣不得仍是前一人</strong>;</li><li>有 <code>announcer</code> 的帳號開 <code>/inbox/announcements/new</code> 發一則公告,確認它出現在收件匣頁。</li></ol>
+<hr>
+<h2>失敗對照表(位置 / 原因 / 修法)</h2>
+<div class="tablewrap"><table><thead><tr><th>症狀</th><th>原因</th><th>修法</th></tr></thead><tbody><tr><td><code>manifest unknown</code></td><td>映像沒推成功</td><td>回第 0 步看 Actions;<strong>不要重推同一個 tag</strong></td></tr><tr><td><code>alembic: cannot find alembic.ini</code></td><td>用的是 <code>0.1.0</code> 的映像</td><td>換 <code>0.1.1</code>(T10d)</td></tr><tr><td><code>--check</code>:<code>host not found in upstream "cats-inbox-api"</code></td><td>容器沒起來或不在 <code>cats-edge</code></td><td>回 B-1 / B-2</td></tr><tr><td><code>/inbox/health</code> 回 <strong>404</strong>,而 gateway 一切正常</td><td>🔴 <code>proxy_pass</code> 誤帶尾斜線(前綴被剝掉)</td><td>改回無尾斜線;C-3 的 staging probe 就是擋這個的</td></tr><tr><td><code>/inbox/</code> 回 <strong>502</strong>,容器 healthy</td><td>容器重建換了 IP 而 gateway 沒 reload</td><td><code>sudo docker exec portal-gateway nginx -s reload</code>(🏷️ 動到 cats-portal)</td></tr><tr><td>收件匣頁 <strong>500</strong>,而 <code>/inbox/health</code> 200</td><td>migration 沒跑(健康檢查刻意不查 DB)</td><td>回 B-3</td></tr><tr><td>登入後停在 Keycloak,app 的 log 空的</td><td><code>redirect_uri</code> 與 client 登記值不逐字相同</td><td>比對 <code>INBOX_PUBLIC_BASE_URL</code>;T04 記過此坑</td></tr><tr><td>discovery 404</td><td><code>INBOX_OIDC_INTERNAL_BASE</code> 帶了 <code>/realms/…</code></td><td>拿掉;realm 由程式自 <code>ISSUER</code> 推導</td></tr></tbody></table></div>
+<hr>
+<h2>版本歷史</h2>
+<div class="tablewrap"><table><thead><tr><th>版本</th><th>日期</th><th>修改人</th><th>摘要</th></tr></thead><tbody><tr><td>v1.0</td><td>2026-08-27</td><td>Benny</td><td>初版(D05)。🔴 <strong>按「需不需要低峰窗口」分段</strong>,而不是按動作分 —— 那才是操作上真正的分界:四段裡<strong>只有 D 段(<code>ops/gateway-apply.sh</code>)會動到正式站</strong>,A(建目錄/<code>.env</code>/拉映像)、B(容器起來 + migration + PG 15 演練 + 驗上游解析)、C(portal repo 改動 + staging <code>verify.sh</code>)<strong>都不需要窗口</strong>,因為 gateway 上還沒有 <code>/inbox/</code> 路由、沒有任何流量會進來。<strong>窗口因此從 2–3 小時縮到約 10 分鐘。</strong> ⚠ 順序仍不可顛倒:白名單的入場券是 B-5 的實測輸出。🔴 <strong>C 段標明在開發者本機而非 VM</strong> —— 在 VM 上直接改 portal 的檔等於繞過 PR,而 portal 憲法 v1.9 的第二次事故正是「VM 在另一條分支上,<code>nginx -t</code> 過、reload 成功而設定根本沒變」;故 D-1 明訂要<strong>驗 commit 對得上</strong>並用 <code>grep -c proxy_pass</code> 確認設定真的解註解了。每段都寫「怎麼知道成功了」與「不成功怎麼退回去」——窗口裡最需要的是「怎麼回到五分鐘前」。含第 0 步發 <code>v0.1.1</code> 的指令與 Release 四段內容(<code>0.1.0</code> 的映像跑不了 migration,T10d),以及把 T03/T04/T06 留下的三項真人驗證掛進 B-6。🔴 <strong>本稿尚未被執行過</strong> —— T11b 就是它的第一次演練</td></tr></tbody></table></div>
+</body>
+</html>

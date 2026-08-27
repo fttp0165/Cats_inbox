@@ -139,6 +139,55 @@ def test_workflow_image_repo_matches_compose(workflow_text):
 
 
 # ═══════════════════════════════════════════════════════════════════
+# 3b. 🔴 映像必須自己帶得動 migration(T10d)
+# ═══════════════════════════════════════════════════════════════════
+def _dockerfile() -> str:
+    return (ROOT / "Dockerfile").read_text(encoding="utf-8")
+
+
+def test_image_ships_alembic_so_migrations_can_run():
+    """映像必須帶 `alembic.ini` 與 `alembic/` —— 否則 migration **無處可跑**。
+
+    🔴 T10d 的根因:`Dockerfile` 原本只 `COPY app/`。而
+       ① 應用**刻意不做** `create_all()`(schema 的唯一權威是 `alembic/versions/`),
+       ② v0.1.0 的 Release 頁明寫「要跑 migration:是 —— `alembic upgrade head`」,
+       ③ 平台紅線禁止在正式機 `git pull && build`。
+       三者都對,而**照 Release 頁做不到**:容器裡沒有 alembic.ini。
+    🔴 為什麼沒有測試發現:現有的 migration 測試全部**從 repo checkout** 跑 alembic,
+       從不從映像跑 —— 測試覆蓋的是「腳本對不對」,不是「部署得到的東西裡有沒有它」。
+    ⚠ 症狀:容器正常啟動、health 200(健康檢查刻意不查 DB)、gateway 套用成功,
+      **第一個真人打開收件匣時才 500**,而那時 gateway 已經套好了。
+    """
+    text = _dockerfile()
+    for needed, why in (
+        ("alembic.ini", "alembic 找不到設定檔"),
+        ("alembic/", "沒有 migration 腳本可執行"),
+    ):
+        assert re.search(rf"^COPY\b.*{re.escape(needed)}", text, re.M), (
+            f"🔴 Dockerfile 沒有把 `{needed}` 帶進映像 —— {why};"
+            "`docker exec cats-inbox-api alembic upgrade head` 會失敗"
+        )
+
+
+def test_image_does_not_auto_migrate_on_startup():
+    """🔴 **反向**:不得在 `CMD` / `ENTRYPOINT` 裡自動跑 migration。
+
+    把 alembic 帶進映像會誘惑下一個人順手改成「啟動時自動 upgrade」——那看起來更方便。
+    🔴 不行,兩個理由:
+       ① 多副本時會有兩個 process 同時 migrate;
+       ② 更重要:共通紅線要求「上線後動資料庫前**必先備份**」,而自動 migrate 會讓
+          schema 變更在**沒有人按下確認**的情況下發生 —— 而 `docker compose up -d`
+          平常到不會有人特別注意,**它不該是一個會改 schema 的指令**。
+    """
+    for line in _dockerfile().splitlines():
+        s = line.strip()
+        if s.startswith(("CMD", "ENTRYPOINT")):
+            assert "alembic" not in s, (
+                f"🔴 啟動指令裡有 alembic —— migration 必須是顯式的一步(備份之後才做):{s}"
+            )
+
+
+# ═══════════════════════════════════════════════════════════════════
 # 4. 發版 SOP(第八條要能照著做)
 # ═══════════════════════════════════════════════════════════════════
 def test_release_sop_exists_with_four_required_sections():

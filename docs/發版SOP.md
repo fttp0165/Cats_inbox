@@ -1,8 +1,8 @@
 # cats-inbox 發版 SOP
 
 **建立日期:** 2026-08-25 17:05
-**最後更新:** 2026-08-26 20:05
-**版本:** v1.2
+**最後更新:** 2026-08-27 14:55
+**版本:** v1.3
 **適用範圍:** cats-inbox 的每一次發版(打 tag → 建映像 → VM 換版)
 **權威依據:** 憲法**第八條**(發版儀式)+ 平台紅線(不用 `latest`、不在正式機建置)
 
@@ -21,8 +21,8 @@
 |---|---|
 | `release-image.yml` 的三道一致性檢查 | ✅ **2026-08-26 首次真的跑過**(`release-image #1`,run `32963503452`,79 秒全過) |
 | 映像推上 GHCR | ✅ **已推** `ghcr.io/fttp0165/cats-inbox-api:0.1.0`(digest `sha256:90d5a6f9…`);`tags/list` 只有 `0.1.0`,**沒有 `latest`** |
-| VM 上 `docker compose up -d` | ⏳ **尚未**(`/opt/cats-inbox` 尚不存在,T11) |
-| gateway 路由與 reload | ⏳ **尚未**(路由權威在 portal,T11 提 PR) |
+| VM 上 `docker compose up -d` | ⏳ **尚未**(`/opt/cats-inbox` 尚不存在,**T11b**;指令稿見 `docs/T11b上線指令稿.md`) |
+| gateway 路由與 reload | ⏳ **尚未** —— 設定**已入庫但整段是註解**(T11a ✅);啟用是 **T11b** |
 
 ⚠ 前兩列在 T10c 當時都是 ⏳,而 **Benny 2026-08-26 19:28 推 `v0.1.0` 之後 82 秒
 它們就變成假的** —— 回寫紀錄見 `docs/dev-logs/2026-08-26_D03_首次發版實測與回寫.md`。
@@ -138,7 +138,7 @@ curl -s -H "Authorization: Bearer $TOK" https://ghcr.io/v2/fttp0165/cats-inbox-a
 
 ## 4. VM 換版(在 **CATS VM**)
 
-⚠ **這一節在 T11 完成前都用不到**(`/opt/cats-inbox` 尚不存在)。
+⚠ **這一節在 T11b 完成前都用不到**(`/opt/cats-inbox` 尚不存在)。**首次上線走 `docs/T11b上線指令稿.md`**,本節是之後每次換版用的。
 
 ✅ **VM 端不需要 `docker login ghcr.io`。** 2026-08-26 實測:以**匿名** token 打
 `ghcr.io/v2/fttp0165/cats-inbox-api/manifests/0.1.0` 回 **HTTP 200**(repo 為 public,
@@ -179,6 +179,48 @@ sudo docker exec portal-gateway nginx -s reload
 
 ---
 
+---
+
+## 4.1 migration 在哪裡下(T10d 之後才成立)
+
+🔴 **`0.1.0` 的映像跑不了 migration** —— `Dockerfile` 當時只 `COPY app/`,
+映像裡沒有 `alembic.ini` 也沒有 `alembic/versions/`,而 `0.1.0` 的 Release 頁
+卻明寫「要跑 migration:是 —— `alembic upgrade head`」。
+**`0.1.1` 起映像自己帶著 migration 腳本**,所以下面這一段才成立。
+
+⚠ 症狀為什麼難查:健康檢查刻意不查 DB,所以容器會正常啟動、`/inbox/health` 回 200、
+gateway 也套用成功 —— **第一個真人打開收件匣時才 500**(表不存在)。
+
+**① 先備份**(🔴 共通紅線:上線後動資料庫前必先備份;首次建表時庫是空的,
+但這一步的紀律不因「這次沒資料」而豁免):
+
+> 🖥️ **在哪執行:** Cats VM(ssh 進去)· 工作目錄 /opt/cats-inbox
+
+```bash
+sudo docker exec cats-inbox-pg pg_dump -U cats_inbox cats_inbox \
+  > ~/inbox-before-$(date +%Y%m%d-%H%M).sql
+```
+
+**② 跑 migration**(顯式的一步,**不在容器啟動時自動跑** —— 見 Dockerfile 內註釋):
+
+```bash
+sudo docker exec cats-inbox-api alembic upgrade head
+sudo docker exec cats-inbox-api alembic current   # 應顯示最新 revision
+```
+
+**③ 驗表真的在**:
+
+```bash
+sudo docker exec cats-inbox-pg psql -U cats_inbox -d cats_inbox -c '\dt'
+# 期望看到:app_user / user_role / message / announcement / announcement_read
+#           + alembic_version
+```
+
+🔴 **沒有新 migration 的版本跳過本節。** 判斷方式:`alembic current` 的輸出
+已經等於 `alembic heads`。
+
+---
+
 ## 5. 發版前一分鐘檢查(第八條6)
 
 | # | 檢查 | 不做的後果 |
@@ -195,6 +237,7 @@ sudo docker exec portal-gateway nginx -s reload
 
 | 版本 | 日期 | 修改人 | 摘要 |
 |---|---|---|---|
+| v1.3 | 2026-08-27 | Benny | **新增 §4.1「migration 在哪裡下」(T10d)**。🔴 本節補的是一個**沒有地方可以下那行指令**的缺口:`0.1.0` 的 `Dockerfile` 只 `COPY app/`,映像裡**沒有 `alembic.ini` 也沒有 `alembic/versions/`**,而 `0.1.0` 的 Release 頁卻明寫「要跑 migration:是 —— `alembic upgrade head`」;應用又刻意不做 `create_all()`、平台紅線禁止在正式機 build —— **三份文件都對,而照 Release 頁做不到**。`0.1.1` 起映像自帶 migration 腳本,本節才成立。三步:先 `pg_dump` 備份(共通紅線,不因「這次沒資料」而豁免)→ `docker exec … alembic upgrade head` → `psql -c '\\dt'` 驗五張表真的在。⚠ 症狀難查的理由一併寫進去:健康檢查刻意不查 DB,所以容器正常啟動、health 200、gateway 套用成功,**第一個真人打開收件匣時才 500** |
 | v1.2 | 2026-08-26 | Benny | **首次發版實測回寫(D03)**。§0 前兩列 ⏳ → ✅:`release-image #1`(run `32963503452`)**79 秒全過**、映像 `ghcr.io/fttp0165/cats-inbox-api:0.1.0` 已在 GHCR(digest `sha256:90d5a6f9…`);🔴 **後兩列仍然是 ⏳**(VM 部署、gateway 路由),節標題由「現在還沒真的跑過哪些步驟」改為「哪些真的跑過了、哪些還沒」並要求**逐列標狀態不留空白**(空白會被讀成「應該沒問題」)。§2 新增**離開 GitHub 才驗得到的兩件事**與可直接貼的匿名 curl:①有沒有誤推 `latest`(workflow success 不會告訴你,v0.1.0 實測 `{"tags":["0.1.0"]}`)②別人拉不拉得到。§4 新增 ✅ **VM 端不需要 `docker login`**(匿名 manifest 回 200)—— 🔴 這件事值得專門驗一次,因為 **GHCR 新套件預設 private**,而 private 的症狀是 `docker compose pull` 回 `unauthorized`,出現時機與 `manifest unknown` 一模一樣(低峰窗口、gateway 等著 reload),而「要先 login」當時不在任何部署文件裡 |
 | v1.1 | 2026-08-26 | Benny | **改用憲法 v1.5 的新指令位置格式**(D02)。五處指令區塊由 `【機器】【路徑】【專案】` 改為 `> 🖥️ 在哪執行` 引言;🔴 §1 原本把要改的檔藏在指令裡(`$EDITOR app/__init__.py`)—— 現在改成**兩行 `📄 編輯哪個檔` 明列完整路徑**,因為相對路徑要讀的人自己推,而推錯不會有錯誤訊息(改到另一個 repo 裡同名的檔,測試照樣綠);§4 的 gateway reload 改用**第九條13 的 `🏷️ 動到誰的東西`** —— 那個指令的工作目錄根本不重要,而動的是 portal 擁有的全 VM 唯一入口 |
 | v1.0 | 2026-08-25 | Benny | 初版(T10c)。把憲法第八條變成可照做的五節:發版前(改**兩個**檔案的版本號、跑含 PG 的全測試、migration 雙向演練)、打 tag(workflow 自動驗三道一致性)、寫 Release(四段模板逐段給例)、VM 換版(🔴 兩段指令分屬**兩個 repo 兩個目錄**,後者動的是全 VM 唯一的 gateway)、發版前一分鐘五項檢查。🔴 §0 誠實列出**目前還沒真的跑過**的四個步驟(workflow 沒在真 Actions 上跑過、映像從未推過、VM 目錄還不存在、gateway 路由未提 PR)——第一次發版就是這份 SOP 的第一次演練,故第 1 步是「確認額度」而不是「打 tag」 |

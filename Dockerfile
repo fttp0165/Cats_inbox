@@ -27,6 +27,19 @@ COPY --from=builder /install /usr/local
 WORKDIR /srv/app
 COPY --chown=appuser:appuser app/ ./app/
 
+# 🔴 **migration 腳本必須跟著映像走**(T10d)。
+#    應用刻意**不做** `create_all()`(schema 的唯一權威是 `alembic/versions/`),
+#    而平台紅線禁止在正式機 `git pull && build` —— VM 上只有 compose 與 `.env`。
+#    少了這兩行,`docker exec cats-inbox-api alembic upgrade head` 會失敗在
+#    「找不到 alembic.ini」,而 **v0.1.0 的 Release 頁正是這樣寫的部署步驟**。
+#    ⚠ 症狀特別難查:健康檢查刻意不查 DB,所以容器會正常啟動、health 回 200、
+#      gateway 也套用成功,**第一個真人打開收件匣時才 500**(表不存在)——
+#      而那時 gateway 已經套好了,排查的人會先去看 gateway。
+#    🔴 版本與 migration 綁在同一個映像裡,也讓「映像是 0.1.1 而腳本是別的版本」
+#      這種狀況不可能發生。
+COPY --chown=appuser:appuser alembic.ini ./
+COPY --chown=appuser:appuser alembic/ ./alembic/
+
 USER appuser
 
 # gateway 以 `cats-inbox-api:8080` 反代;埠號是與 portal 的契約的一部分。

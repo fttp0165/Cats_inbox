@@ -12,7 +12,7 @@
 services:
   cats-inbox-api:
     # 🔴 prebuilt image,不在正式機編譯;tag 釘版本,不用 latest
-    image: ghcr.io/fttp0165/cats-inbox-api:0.1.0
+    image: ghcr.io/fttp0165/cats-inbox-api:0.1.1
     container_name: cats-inbox-api
     restart: unless-stopped
     env_file: [.env]
