@@ -241,3 +241,42 @@ def test_env_example_db_url_carries_a_password_slot():
         "pg 有 POSTGRES_PASSWORD 時會要求驗證,而應用是逐字用這個字串;"
         f"症狀是 alembic 失敗於 password authentication failed。現值:{value}"
     )
+
+
+def test_env_example_db_url_driver_matches_installed_dbapi():
+    """🔴 `INBOX_DB_URL` 的 driver 必須與 `requirements.txt` 實際裝的 DBAPI 相符。
+
+    根本原因(2026-08-29 於 VM B-1 發現,**與上一條同一行、同一類**):
+    `.env.example` 寫 `postgresql://`,而 SQLAlchemy 2.0 對這個 scheme 預設用
+    **psycopg2**;`requirements.txt` 裝的是 **psycopg 3**(`psycopg[binary]`)。
+    `create_engine()` 在**建立時**就載入 dialect → `ModuleNotFoundError: psycopg2`
+    → `create_app()` 直接拋例外 → **容器在重啟迴圈裡**(restart policy 是 unless-stopped)。
+
+    🔴 **為什麼測試沒抓到(第二次同樣的理由)**:測試走 `INBOX_TEST_DB_URL`,
+       而 `tests/pg_local.sh` 給的是 **`postgresql+psycopg://`** —— 是對的那個。
+       `.env.example` 那一行**只在真的部署時才被讀到**。
+    ⚠ `app/main.py` 的 fallback 預設值也是 `postgresql+psycopg://` —— 也就是說
+      **程式碼知道正確答案,而部署樣板不知道**。
+
+    ⚠ 上一條(密碼欄位)只檢查了同一行的**一半**,所以同一行以第二種方式錯了一次。
+      本條把 driver 也釘住,並與 `requirements.txt` **綁在一起**驗 ——
+      哪天換回 psycopg2,兩邊會一起紅而不是靜靜地不一致。
+    """
+    reqs = (ROOT / "requirements.txt").read_text(encoding="utf-8")
+    has_psycopg3 = bool(re.search(r"^psycopg\[", reqs, re.M) or re.search(r"^psycopg==", reqs, re.M))
+    has_psycopg2 = bool(re.search(r"^psycopg2", reqs, re.M))
+    assert has_psycopg3 != has_psycopg2, (
+        f"🔴 requirements 同時(或都不)裝 psycopg3/psycopg2:3={has_psycopg3} 2={has_psycopg2}"
+    )
+    want = "postgresql+psycopg://" if has_psycopg3 else "postgresql+psycopg2://"
+
+    text = (ROOT / ".env.example").read_text(encoding="utf-8")
+    line = next((ln for ln in text.splitlines() if ln.startswith("INBOX_DB_URL=")), None)
+    assert line, "🔴 `.env.example` 沒有 INBOX_DB_URL"
+    value = line.split("=", 1)[1]
+    assert value.startswith(want), (
+        f"🔴 `INBOX_DB_URL` 的 driver 與實際裝的 DBAPI 不符:應以 `{want}` 開頭。"
+        "⚠ 症狀不是連線失敗,是**容器在重啟迴圈裡** —— `create_engine()` 建立時就載入 "
+        "dialect,找不到模組會讓 `create_app()` 拋例外。"
+        f"現值:{value}"
+    )
