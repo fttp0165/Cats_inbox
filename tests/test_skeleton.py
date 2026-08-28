@@ -211,3 +211,33 @@ def test_env_file_is_gitignored():
     """.env 必須在 .gitignore 內——這條是共通紅線,值得有一個測試盯著。"""
     assert re.search(r"^\.env$", (ROOT / ".gitignore").read_text(encoding="utf-8"),
                      re.MULTILINE)
+
+def test_env_example_db_url_carries_a_password_slot():
+    """🔴 `INBOX_DB_URL` 必須帶密碼欄位(`user:...@`)。
+
+    根本原因(2026-08-28 於 VM 部署 A 段時發現):
+    `app/config.py` 把 `INBOX_DB_URL` **逐字**當連線字串用,而 `.env.example` 原本寫
+    `postgresql://cats_inbox@cats-inbox-pg:5432/cats_inbox` —— **沒有密碼**。
+    同時 compose 給 pg 設了 `POSTGRES_PASSWORD`,而 postgres 官方映像在有密碼時
+    以 `scram-sha-256` 要求驗證 → 應用連不上,錯誤是
+    `password authentication failed for user "cats_inbox"`。
+
+    🔴 **為什麼測試沒抓到**:測試走 `INBOX_TEST_PG_URL`(本機 PG,自己帶認證),
+       **從不用 `.env.example` 的那一行** —— 那一行只在真的部署時才被讀到。
+    ⚠ 症狀還會指錯方向:健康檢查刻意不查 DB,所以容器 healthy、`/inbox/health` 200,
+      而 `alembic upgrade head` 才失敗 —— 看起來像 migration 的問題,其實是連線字串。
+    """
+    text = (ROOT / ".env.example").read_text(encoding="utf-8")
+    line = next(
+        (ln for ln in text.splitlines() if ln.startswith("INBOX_DB_URL=")), None
+    )
+    assert line, "🔴 `.env.example` 沒有 INBOX_DB_URL"
+    value = line.split("=", 1)[1]
+    host_part = value.split("//", 1)[1].split("/", 1)[0]   # user[:pw]@host:port
+    assert "@" in host_part, f"🔴 連線字串沒有帳號區段:{value}"
+    userinfo = host_part.rsplit("@", 1)[0]
+    assert ":" in userinfo, (
+        "🔴 `INBOX_DB_URL` 沒有密碼欄位(`user:密碼@host`)—— "
+        "pg 有 POSTGRES_PASSWORD 時會要求驗證,而應用是逐字用這個字串;"
+        f"症狀是 alembic 失敗於 password authentication failed。現值:{value}"
+    )
