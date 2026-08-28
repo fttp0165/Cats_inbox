@@ -331,9 +331,21 @@ def models_engine():
     """
     import os
 
+    import pytest as _pytest
     from sqlalchemy import create_engine, text
 
-    url = os.environ["INBOX_TEST_MODELS_DB_URL"]
+    # 🔴 少設這個變數要 **skip 並說清楚少了什麼**,不是 KeyError(T05b)。
+    #    兩支測試檔的 `skipif` 只看 `INBOX_TEST_DB_URL`,所以只設那一個的話
+    #    測試會**開始跑**,然後死在這一行 —— 而 `KeyError:
+    #    'INBOX_TEST_MODELS_DB_URL'` 看起來像「測試壞了」,
+    #    不像「你少設了一個環境變數」。⚠ 症狀指向錯的地方,人就會去查錯的東西。
+    url = os.getenv("INBOX_TEST_MODELS_DB_URL")
+    if not url:
+        _pytest.skip(
+            "需要第二個資料庫:請一併設 INBOX_TEST_MODELS_DB_URL"
+            "(`tests/pg_local.sh start` 會同時輸出兩個 export)",
+            allow_module_level=False,
+        )
     engine = create_engine(url, future=True)
     with engine.begin() as conn:
         for tbl in ("announcement_read", "announcement", "message",

@@ -1,4 +1,4 @@
-# CI(憲法第三條2:tests/ 內測試 push/PR 必跑;紅燈照設計改回,嚴禁改測試放水)
+# CI(憲法第三條2:tests/ 內測試 push/PR 必跑;紅燈一律照設計改回,嚴禁改測試放水)
 name: ci
 
 on:
@@ -8,6 +8,45 @@ on:
 jobs:
   tests:
     runs-on: ubuntu-latest
+
+    # =========================================================================
+    # T05b — 真的 PostgreSQL 15。
+    #
+    # 🔴 為什麼一定要有這一段:沒有它的時候,`tests/test_migration.py`(3 支)與
+    #    `tests/test_schema.py`(10 支)因為 `INBOX_TEST_DB_URL` 沒設而**整批 skip**,
+    #    而 CI 照樣綠燈 —— 第三條2 要求「測試納入 CI 防止回歸」,
+    #    那 13 支從 T05 至今沒有防護過任何一次 push。
+    #    ⚠ **「沒跑」與「跑過且綠」在綠燈上長得一樣**,這是它撐了那麼久的原因。
+    #
+    # 🔴 版本釘 **15**(平台紅線),而且刻意用**與 VM 上同一個 tag**:
+    #    2026-08-28 實測 VM 跑的是 `postgres:15.8-alpine`。
+    #    `tests/pg_local.sh` 的檔頭寫著「本機是 PG16,**PG16 演練不等於 PG15 演練**」——
+    #    這一段讓那句話的缺口在每次 push 上補起來,不必靠有人記得去 VM 上手動演練一次。
+    # =========================================================================
+    services:
+      postgres:
+        image: postgres:15.8-alpine
+        env:
+          POSTGRES_USER: cats_inbox
+          POSTGRES_DB: cats_inbox_mig
+          # 🔴 刻意用 trust 而不是寫一個密碼進 git:
+          #    ①共通紅線是「secret 絕不進 git」,而「這個字串算不算 secret」
+          #      本身就是個會吵起來的問題 —— 不寫就沒有這個問題;
+          #    ②這個容器是**一次性**的、只在 runner 的 localhost 上、裡面只有
+          #      fixture 假資料(第三條3)。
+          #    ⚠ **絕不可**把這一行搬到任何部署用的 compose 裡 ——
+          #      那裡的 `cats-inbox-pg` 走 scram-sha-256 且密碼由 `.env` 帶。
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - 5432:5432
+        # 沒有健康檢查的話,測試會在 postgres 還沒 ready 時開跑,
+        # 症狀是偶發的 connection refused —— 那種紅燈會被當成 flaky 而被重跑掉。
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
     steps:
       - uses: actions/checkout@v4
 
@@ -19,7 +58,36 @@ jobs:
       - name: install test dependencies
         run: pip install -r requirements-dev.txt
 
+      # 第二個資料庫:migration 跑在 `_mig`,`create_all()` 跑在 `_models`。
+      # 🔴 分開是 T07 的 `test_models_match_migration_schema` 需要的 ——
+      #    要比對兩種建法的結果,它們不能建在同一個庫裡互相覆蓋
+      #    (與 `tests/pg_local.sh` 同一個理由,那裡也建兩個)。
+      # ⚠ 用 psycopg 而不是 psql:psycopg 是 requirements 裡釘版的依賴,
+      #   runner 上有沒有 `psql`、是哪個版本,都不該影響測試跑不跑得動。
+      - name: create the second test database
+        run: |
+          python - <<'PY'
+          import psycopg
+
+          # CREATE DATABASE 不能在交易裡跑 → 必須 autocommit
+          with psycopg.connect(
+              "postgresql://cats_inbox@localhost:5432/cats_inbox_mig", autocommit=True
+          ) as conn:
+              conn.execute("CREATE DATABASE cats_inbox_models")
+          print("✅ cats_inbox_models 已建立")
+          PY
+
       # run_all.sh 同時跑 bash 與 pytest;新增測試檔會自動被撿起,CI 設定不必再改。
       # 🔴 run_all.sh 在找不到 pytest 時視為失敗而非跳過——「沒跑」不得與「跑過且綠」長得一樣。
       - name: run all tests
+        env:
+          # 🔴 **兩個都要設。** 兩支測試檔的 skipif 只看 `INBOX_TEST_DB_URL`,
+          #    所以只設它會讓測試**開始跑**,然後在
+          #    `tests/conftest.py::pg_models_engine` 的 `os.environ[...]` 上 KeyError
+          #    —— 那個症狀看起來像「測試壞了」而不是「CI 少設一個變數」。
+          # 🔴 driver 必須是 `+psycopg`(psycopg 3):寫 `postgresql://` 會讓
+          #    SQLAlchemy 去載 **psycopg2** 而它沒裝。2026-08-29 在 VM 上同一個錯誤
+          #    的症狀是**容器重啟迴圈**,不是好認的連線錯誤。
+          INBOX_TEST_DB_URL: postgresql+psycopg://cats_inbox@localhost:5432/cats_inbox_mig
+          INBOX_TEST_MODELS_DB_URL: postgresql+psycopg://cats_inbox@localhost:5432/cats_inbox_models
         run: bash tests/run_all.sh

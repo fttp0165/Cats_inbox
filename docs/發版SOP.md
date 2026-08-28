@@ -1,8 +1,8 @@
 # cats-inbox 發版 SOP
 
 **建立日期:** 2026-08-25 17:05
-**最後更新:** 2026-08-27 17:10
-**版本:** v1.4
+**最後更新:** 2026-08-29 01:45
+**版本:** v1.5
 **適用範圍:** cats-inbox 的每一次發版(打 tag → 建映像 → VM 換版)
 **權威依據:** 憲法**第八條**(發版儀式)+ 平台紅線(不用 `latest`、不在正式機建置)
 
@@ -131,6 +131,13 @@ curl -s -H "Authorization: Bearer $TOK" https://ghcr.io/v2/fttp0165/cats-inbox-a
 🔴 未實際跑過的不得寫成通過;skipped 要如實寫成 skipped。
 ```
 
+🔴 **「CI 綠燈」自 2026-08-29(T05b)起才包含那 13 項。**
+在那之前 `ci.yml` 沒有 PostgreSQL,那 13 支 schema/migration 測試在 CI 上**整批 skip**,
+於是「CI 綠」與「全部測試跑過」是兩件事,而 Release 頁上寫的是前者。
+現在 CI 有 `postgres:15.8-alpine`(**與 VM 同一個 tag**),兩件事合而為一。
+⚠ 引用 `v0.1.0` / `v0.1.1` 兩份 Release 頁的測試數字時要記得這一點 ——
+它們寫的「247 項全綠」當時為真,而**那 13 項是靠人在本機起 PG 才跑到的**。
+
 🔴 **Release 頁是使用者與未來的自己唯一會看的「這一版是什麼」** —— tag 本身
 說不出任何事。
 
@@ -236,6 +243,7 @@ sudo docker exec cats-inbox-pg psql -U cats_inbox -d cats_inbox -c '\dt'
 
 | 版本 | 日期 | 修改人 | 摘要 |
 |---|---|---|---|
+| v1.5 | 2026-08-29 | Benny | **§3 補一段:「CI 綠燈」自 T05b 起才包含那 13 項**(第二條5)。在那之前 `ci.yml` 沒有 PostgreSQL,`test_migration.py`+`test_schema.py` 共 13 支在 CI 上**整批 skip** ——於是本 SOP 要求寫進 Release 頁的「**CI 綠燈狀態**」與「全部測試跑過」是**兩件事**,而 §1 第 ③ 步(要起本機 PG)才是讓它們合起來的那一步、**且靠人記得**。現在 CI 有 `postgres:15.8-alpine`(與 VM 同一個 tag),兩件事合而為一。⚠ 並標明 `v0.1.0`/`v0.1.1` 兩份 Release 頁的「247 項全綠」**當時為真**,而那 13 項是靠人在本機起 PG 才跑到的 —— 已發布的頁面不改(歷史紀錄) |
 | v1.4 | 2026-08-27 | Benny | **§0 前兩列更新為兩次實測**:三道一致性檢查已跑過 `#1`(79 秒)與 `#2`(60 秒);映像**已推兩版** `0.1.0` 與 `0.1.1`,`tags/list` 回 `["0.1.0","0.1.1"]` **無 `latest`**。⚠ 順帶記一個 SOP 本身的教訓(已落到 `T11b上線指令稿` v1.3):第 2 節「打 tag」與第 3 節「寫 Release」**是兩節**,而走本機路徑的人推完 tag 就會停 —— **裸 tag 的狀態會持續**,而第八條1 明訂不得只推裸 tag。2026-08-27 實測發生過一次 |
 | v1.3 | 2026-08-27 | Benny | **新增 §4.1「migration 在哪裡下」(T10d)**。🔴 本節補的是一個**沒有地方可以下那行指令**的缺口:`0.1.0` 的 `Dockerfile` 只 `COPY app/`,映像裡**沒有 `alembic.ini` 也沒有 `alembic/versions/`**,而 `0.1.0` 的 Release 頁卻明寫「要跑 migration:是 —— `alembic upgrade head`」;應用又刻意不做 `create_all()`、平台紅線禁止在正式機 build —— **三份文件都對,而照 Release 頁做不到**。`0.1.1` 起映像自帶 migration 腳本,本節才成立。三步:先 `pg_dump` 備份(共通紅線,不因「這次沒資料」而豁免)→ `docker exec … alembic upgrade head` → `psql -c '\\dt'` 驗五張表真的在。⚠ 症狀難查的理由一併寫進去:健康檢查刻意不查 DB,所以容器正常啟動、health 200、gateway 套用成功,**第一個真人打開收件匣時才 500** |
 | v1.2 | 2026-08-26 | Benny | **首次發版實測回寫(D03)**。§0 前兩列 ⏳ → ✅:`release-image #1`(run `32963503452`)**79 秒全過**、映像 `ghcr.io/fttp0165/cats-inbox-api:0.1.0` 已在 GHCR(digest `sha256:90d5a6f9…`);🔴 **後兩列仍然是 ⏳**(VM 部署、gateway 路由),節標題由「現在還沒真的跑過哪些步驟」改為「哪些真的跑過了、哪些還沒」並要求**逐列標狀態不留空白**(空白會被讀成「應該沒問題」)。§2 新增**離開 GitHub 才驗得到的兩件事**與可直接貼的匿名 curl:①有沒有誤推 `latest`(workflow success 不會告訴你,v0.1.0 實測 `{"tags":["0.1.0"]}`)②別人拉不拉得到。§4 新增 ✅ **VM 端不需要 `docker login`**(匿名 manifest 回 200)—— 🔴 這件事值得專門驗一次,因為 **GHCR 新套件預設 private**,而 private 的症狀是 `docker compose pull` 回 `unauthorized`,出現時機與 `manifest unknown` 一模一樣(低峰窗口、gateway 等著 reload),而「要先 login」當時不在任何部署文件裡 |

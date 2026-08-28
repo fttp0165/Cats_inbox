@@ -10,9 +10,16 @@
     - 容器 non-root、EXPOSE 8080
     - 所有 .env 變數必須在 .env.example 列明(缺漏=CI 失敗)
 
-為什麼是靜態斷言而不是 `docker compose up`:這些錯誤全部在**檔案內容**就決定了,
-而 CI runner 上跑不起真的 PostgreSQL+gateway。把它們釘在檔案層,錯誤會在 PR 就出現,
-不必等到 VM 上部署才發現——後者的代價是「重建後 502」那一類已經有人踩過的坑。
+為什麼是靜態斷言而不是 `docker compose up`:這些錯誤全部在**檔案內容**就決定了。
+把它們釘在檔案層,錯誤會在 PR 就出現,不必等到 VM 上部署才發現——
+後者的代價是「重建後 502」那一類已經有人踩過的坑。
+
+🔴 **2026-08-28 更正(T05b):本段原本寫「而 CI runner 上跑不起真的 PostgreSQL+gateway」。**
+   `gateway` 那半是對的(CI 上沒有整個平台可以反代),**`PostgreSQL` 那半是錯的**
+   —— GitHub Actions 的 `services:` 就是用來跑它的。
+   而錯的那半正是有影響的那半:CI 因此一直沒有 PG service,
+   `test_migration.py` + `test_schema.py` 共 **13 支整批 skip**,綠燈照樣是綠燈。
+   ⚠ **一個寫下來的錯誤理由比沒有理由更難發現** —— 它讀起來像已經有人判斷過了。
 """
 
 import re
@@ -279,4 +286,122 @@ def test_env_example_db_url_driver_matches_installed_dbapi():
         "⚠ 症狀不是連線失敗,是**容器在重啟迴圈裡** —— `create_engine()` 建立時就載入 "
         "dialect,找不到模組會讓 `create_app()` 拋例外。"
         f"現值:{value}"
+    )
+
+
+# =============================================================================
+# T05b — CI 必須有真的 PostgreSQL 15,否則 13 支 schema/migration 測試整批 skip
+# =============================================================================
+
+CI_WORKFLOW = ROOT / ".github" / "workflows" / "ci.yml"
+
+# 這 13 支測試需要的兩個變數。少一個不是「少測一點」:
+# `tests/conftest.py::pg_models_engine` 用 `os.environ[...]`,少設會是 KeyError。
+DB_ENV_VARS = ("INBOX_TEST_DB_URL", "INBOX_TEST_MODELS_DB_URL")
+
+
+def _ci_yaml() -> dict:
+    """讀 CI workflow 並以 YAML 解析。
+
+    用途:給下面三條守門共用。
+    回傳:解析後的 dict。
+    副作用:無(只讀檔)。
+
+    🔴 用 YAML 解析而不是 grep:「有沒有 `postgres` 這個字」與
+       「有沒有一個 image 是 postgres:15 的 service」是兩件事,
+       而前者會被註釋裡的 `postgres` 滿足。本專案已記過四次
+       「斷言的粒度比它宣稱保護的性質粗」。
+    """
+    assert CI_WORKFLOW.exists(), f"🔴 找不到 {CI_WORKFLOW}"
+    return yaml.safe_load(CI_WORKFLOW.read_text(encoding="utf-8"))
+
+
+def _tests_job(cfg: dict) -> dict:
+    jobs = cfg.get("jobs") or {}
+    assert "tests" in jobs, f"🔴 CI 沒有 `tests` job(有:{sorted(jobs)})"
+    return jobs["tests"]
+
+
+def test_ci_runs_tests_against_a_real_postgres_15():
+    """🔴 CI 必須宣告一個 **PostgreSQL 15** 的 service。
+
+    根本原因(2026-08-28 回寫進度表時發現):CI 從來沒有 `services:` 區塊,
+    於是 `tests/test_migration.py`(3 支)與 `tests/test_schema.py`(10 支)
+    **每一次 push 都整批 skip** —— 而它們正是 schema 與 migration 的測試,
+    `test_migration_up_down_up` 就是共通紅線要求的 up→down→up 雙向演練本身。
+    **第三條2 要求「測試納入 CI 防止回歸」,而這 13 支從 T05 至今沒有防護過任何一次 push。**
+
+    ⚠ 症狀為什麼看不出來:`run_all.sh` 最後印「測試群組: N/N 通過」,
+      CI 綠燈;skip 不是失敗。**「沒跑」與「跑過且綠」在綠燈上長得一樣。**
+
+    🔴 **為什麼必須釘住是 15 而不是「有 postgres 就好」**:平台紅線是 PG 15,
+       而 `tests/pg_local.sh` 自己就寫著「本機是 PG16,**PG16 演練不等於 PG15 演練**」。
+       只驗「有 postgres 字樣」的話,`postgres:16` 會通過,
+       而那正是這條守門要擋的那個誤會。
+    """
+    job = _tests_job(_ci_yaml())
+    services = job.get("services") or {}
+    images = {name: (spec or {}).get("image", "") for name, spec in services.items()}
+    assert images, (
+        "🔴 CI 的 `tests` job 沒有任何 `services:` —— "
+        "13 支 schema/migration 測試會整批 skip,而 CI 仍然綠燈。"
+    )
+    pg = [img for img in images.values() if "postgres" in img]
+    assert pg, f"🔴 CI 的 services 裡沒有 postgres:{images}"
+    assert any(re.search(r"postgres:15(\.|-|$)", img) for img in pg), (
+        f"🔴 CI 的 PostgreSQL 不是 **15**(平台紅線的版本):{pg}。"
+        "⚠ PG16 演練不等於 PG15 演練 —— `tests/pg_local.sh` 的檔頭就是為這句話寫的。"
+    )
+
+
+def test_ci_passes_both_db_urls_to_the_test_step():
+    """🔴 跑測試那一步必須拿到**兩個** `INBOX_TEST_*_DB_URL`。
+
+    只設 `INBOX_TEST_DB_URL` 是最容易犯的錯 —— 兩個 skipif 都只看它,
+    所以測試會**開始跑**,然後在 `tests/conftest.py::pg_models_engine` 的
+    `os.environ["INBOX_TEST_MODELS_DB_URL"]` 上 **KeyError**。
+    ⚠ 那個症狀看起來像「測試壞了」,而實際上是「CI 少設一個變數」。
+    """
+    job = _tests_job(_ci_yaml())
+    steps = job.get("steps") or []
+    runners = [s for s in steps if "run_all.sh" in str((s or {}).get("run", ""))]
+    assert runners, "🔴 CI 沒有任何步驟跑 `tests/run_all.sh`"
+    for step in runners:
+        env = step.get("env") or {}
+        missing = [v for v in DB_ENV_VARS if v not in env]
+        assert not missing, (
+            f"🔴 跑測試那一步少了 {missing};"
+            f"有的是:{sorted(env)}。少設的後果不是 skip,是 KeyError。"
+        )
+
+
+def test_ci_db_urls_use_the_installed_dbapi_driver():
+    """🔴 CI 的連線字串 driver 必須與 `requirements.txt` 實際裝的 DBAPI 相符。
+
+    與 `.env.example` 那兩條同一個理由,但這裡是**第三個**會被讀到的地方:
+    寫 `postgresql://` 而裝的是 psycopg 3 → `ModuleNotFoundError: psycopg2`。
+    ⚠ 在 VM 上那個症狀是**容器重啟迴圈**(2026-08-29 實測);在 CI 上會是
+      13 支測試整批 error —— 兩邊都不是「連線失敗」那種好認的訊息。
+    """
+    reqs = (ROOT / "requirements.txt").read_text(encoding="utf-8")
+    has_psycopg3 = bool(re.search(r"^psycopg\[", reqs, re.M) or re.search(r"^psycopg==", reqs, re.M))
+    want = "postgresql+psycopg://" if has_psycopg3 else "postgresql+psycopg2://"
+
+    job = _tests_job(_ci_yaml())
+    checked = 0
+    for step in job.get("steps") or []:
+        env = (step or {}).get("env") or {}
+        for var in DB_ENV_VARS:
+            if var in env:
+                checked += 1
+                assert str(env[var]).startswith(want), (
+                    f"🔴 CI 的 {var} 應以 `{want}` 開頭(實際裝的 DBAPI 決定),"
+                    f"現值以 `{str(env[var]).split('://')[0]}://` 開頭"
+                )
+    # 🔴 一條「什麼都沒檢查到也會綠」的斷言不是保護,是裝飾。
+    #    上一條守門保證這兩個變數存在,而**萬一有人把上一條刪了**,
+    #    這一條會變成永遠通過而看起來仍在守門(本專案記過四次的形狀)。
+    assert checked == len(DB_ENV_VARS), (
+        f"🔴 這條守門只檢查到 {checked} 個連線字串(應為 {len(DB_ENV_VARS)})——"
+        "它自己什麼都沒驗到,不是「通過」"
     )
