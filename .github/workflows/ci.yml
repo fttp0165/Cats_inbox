@@ -41,8 +41,19 @@ jobs:
           - 5432:5432
         # 沒有健康檢查的話,測試會在 postgres 還沒 ready 時開跑,
         # 症狀是偶發的 connection refused —— 那種紅燈會被當成 flaky 而被重跑掉。
+        #
+        # 🔴 `-U cats_inbox -d cats_inbox_mig` 不是裝飾(`ci #46` 實測回寫):
+        #    不帶 `-U` 時 `pg_isready` 用 OS 使用者(容器裡是 `root`)去試,
+        #    於是 postgres 的 log 每 10 秒噴一次 `FATAL: role "root" does not exist`
+        #    —— **五次 FATAL,而健康檢查照樣回綠**,因為 `pg_isready` 只判斷
+        #    「伺服器有沒有回應」,回一個 FATAL 也算有回應。
+        #    ⚠ **誠實標註:帶了 `-U` 也不會讓它驗到 role 真的存在** ——
+        #    `pg_isready` 不做完整連線。真正擋住「role/database 沒建起來」的是
+        #    **下一步**(`create the second test database` 會以 `cats_inbox` 身分連進去,
+        #    少了任一個就當場失敗)。這裡改的是**不要噴看起來像錯誤的 log**,
+        #    不是改強度 —— 兩者不要混為一談。
         options: >-
-          --health-cmd pg_isready
+          --health-cmd "pg_isready -U cats_inbox -d cats_inbox_mig"
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
