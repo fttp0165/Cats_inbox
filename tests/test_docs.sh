@@ -183,6 +183,45 @@ case "$STATUS_CMP" in
   *)   ng "docs/進度表.md" "${STATUS_CMP#NG }" ;;
 esac
 
+echo "[8] 可貼指令的靜默失敗形狀"
+
+# 🔴 `docker exec <容器> <cmd> - <<'X'` 少了 `-i` 會**靜默做不到事**:
+#    沒有 `-i` 就不會接上 stdin,heredoc 的內容根本沒進到容器 ——
+#    直譯器讀到空輸入、執行空程式、**exit 0、零輸出、零錯誤**。
+#    ⚠ 2026-09-01 實測:B-6 的 ① 一片空白而 ② 正常(② 走 `python -c` 不需 stdin),
+#    看起來像「① 沒問題」,而它根本沒跑。
+#    這道守門逐行掃 docs/*.md 與 tests/*.sh:某行同時有那個指令與 heredoc 起手、
+#    而旗標裡沒有 i,即紅。
+EXEC_NO_I="$(python3 - <<'GATE'
+import pathlib, re
+
+# 🔴 關鍵字**拼出來**,不寫成字面 —— 否則本檔自己這一行就會被自己掃到而永遠紅。
+#    ⚠ 第一版真的踩到了(守門抓到的第一個「缺陷」是它自己)。
+TOK = "docker" + " " + "exec"
+HEREDOC = re.compile(r"<<-?['\"]?[A-Za-z_]")     # <<PY / <<'PY' / <<-"PY"
+HAS_I = re.compile(r"\s-[a-zA-Z]*i[a-zA-Z]*(?=\s|$)")   # -i / -it / -ti 都算
+
+bad = []
+for p in sorted(pathlib.Path("docs").glob("*.md")) + sorted(pathlib.Path("tests").glob("*.sh")):
+    for n, line in enumerate(p.read_text(encoding="utf-8").splitlines(), 1):
+        # 🔴 `#` 開頭的行跳過 —— **註解不是指令**,講解這個坑的說明文字
+        #    本身一定會含有它要找的字樣。⚠ 第一版沒跳,於是這道守門抓到的
+        #    第一個「缺陷」是它自己上面那行註解(本專案「量測工具自己出問題」
+        #    的第六次)。
+        if line.lstrip().startswith("#"):
+            continue
+        if TOK in line and HEREDOC.search(line) and not HAS_I.search(line):
+            bad.append(f"{p}:{n}")
+print("\n".join(bad))
+GATE
+)"
+if [ -n "$EXEC_NO_I" ]; then
+  ng "docker exec heredoc" "少了 -i,heredoc 不會進到容器(靜默 exit 0):
+$EXEC_NO_I"
+else
+  ok "🔴 每個餵 heredoc 的 docker exec 都帶 -i"
+fi
+
 # IdP 已定案 Keycloak(portal D1);任何殘留 Authentik 都是過期文案
 if grep -riq "authentik" --include="*.md" --include="*.py" --include="*.html" . 2>/dev/null; then
   ng "repo" "殘留 Authentik 字樣(IdP 已定案 Keycloak)"
