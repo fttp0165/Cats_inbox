@@ -37,7 +37,7 @@ figure.svg svg { max-width:100%; height:auto; }
 </head>
 <body>
 <h1>cats-inbox 推送 API 來源接入指南</h1>
-<p><strong>建立日期:</strong> 2026-09-23 17:30<br><strong>最後更新:</strong> 2026-09-23 17:30<br><strong>版本:</strong> v1.0</p>
+<p><strong>建立日期:</strong> 2026-09-23 15:10<br><strong>最後更新:</strong> 2026-09-23 15:24<br><strong>版本:</strong> v1.0</p>
 <blockquote><p><strong>給誰看:</strong> 要把系統通知推進站內信的<strong>來源系統</strong>團隊(第一個是 DI-4 立案的那一個)。<br><strong>一句話:</strong> 用你們自己的 S2S client 以 client_credentials 換一張帶 <code>notification:push</code> 的 token,<br><code>POST /inbox/api/v1/notifications</code>,每個事件帶一把 <code>Idempotency-Key</code> 與觸發者的 <code>X-User-Id</code>。<br><strong>規格權威:</strong> portal 2026-08-18 核定(《帳號系統接入契約》§11.7 第一案)+ 本服務 OpenAPI(<code>/inbox/openapi.json</code>)。<br>本指南與契約衝突時<strong>以契約為準</strong>;與 OpenAPI 衝突時以 OpenAPI 為準,並請回報(那是本文件的錯)。<br>交付副本時檔名加前綴:<code>cats-inbox_來源接入指南_v1.0.md</code>(憲法 A.4)。</p></blockquote>
 <hr>
 <h2>0. 先看這三條(它們都不會有錯誤訊息)</h2>
@@ -125,6 +125,6 @@ PY</code></pre>
 <div class="tablewrap"><table><thead><tr><th>位置</th><th>症狀</th><th>原因</th><th>修法</th></tr></thead><tbody><tr><td>推送回應</td><td>403 <code>insufficient_scope</code>,而 token 換得到</td><td>換 token 時沒帶 <code>scope=notification:push</code>(它是 <strong>optional</strong> scope)</td><td>換 token 的 form 加 <code>scope=notification:push</code></td></tr><tr><td>推送回應</td><td>401 <code>invalid_token</code>,token 剛換的</td><td><code>aud</code> 不含 <code>cats-inbox</code>(portal 的 audience mapper 沒掛在那個 scope 上),或拿成了 id_token</td><td>把 token 貼到 jwt 解碼工具看 <code>aud</code> 與 <code>typ</code>(應為 <code>Bearer</code>)—— 🔴 用離線工具,不要貼到網站</td></tr><tr><td>收件匣</td><td>推送回 201,收件人說沒看到</td><td><code>recipient_sub</code> 填成別人的 <code>sub</code></td><td>用收件人本人的 <code>sub</code>;本服務已擋掉「不是 UUID」的情況,擋不住「是 UUID 但不是他」</td></tr><tr><td>收件匣</td><td>同一件事出現兩次</td><td>重試時換了 key,或超過 24 小時才補送</td><td>重試沿用同一把 key(§5)</td></tr><tr><td>推送回應</td><td>大量 422</td><td>key 由時間戳/固定字串產生,不同事件撞在一起</td><td>key 改由事件識別組成(§3.1)</td></tr></tbody></table></div>
 <hr>
 <h2>版本歷史</h2>
-<div class="tablewrap"><table><thead><tr><th>版本</th><th>日期</th><th>修改人</th><th>摘要</th></tr></thead><tbody><tr><td>v1.0</td><td>2026-09-23</td><td>Benny</td><td>初版(T14a)。依 portal 2026-08-18 核定規格與本服務實作(<code>app/routes_push.py</code>)寫成給來源系統照做的指南:開通五步(誰做什麼)、取 token(🔴 必須明確要求 optional scope、token 要快取)、三個必帶標頭、body 欄位規則、六種成功/失敗回應與<strong>逐碼的處置與可否重試</strong>、重試規則、本服務保證的事、可貼的冒煙清單(secret 自容器環境變數讀、不印出)、常見錯誤對照。🔴 <strong>誠實標註一個核定規格沒有明講的點</strong>:沒有人觸發的事件(排程/批次)<code>X-User-Id</code> 要填誰 —— 列為 T14b 動工前與 portal 定案</td></tr></tbody></table></div>
+<div class="tablewrap"><table><thead><tr><th>版本</th><th>日期</th><th>修改人</th><th>摘要</th></tr></thead><tbody><tr><td>v1.0</td><td>2026-09-23</td><td>Benny</td><td>初版(T14a)。依 portal 2026-08-18 核定規格與本服務實作(<code>app/routes_push.py</code>)寫成給來源系統照做的指南:開通五步(誰做什麼)、取 token(🔴 必須明確要求 optional scope、token 要快取)、三個必帶標頭、body 欄位規則、六種成功/失敗回應與<strong>逐碼的處置與可否重試</strong>、重試規則、本服務保證的事、可貼的冒煙清單(secret 自容器環境變數讀、不印出)、常見錯誤對照。🔴 <strong>誠實標註一個核定規格沒有明講的點</strong>:沒有人觸發的事件(排程/批次)<code>X-User-Id</code> 要填誰 —— 列為 T14b 動工前與 portal 定案 ⚠ <strong>時間戳更正</strong>(非實質變更,不升版):建立日期與最後更新原寫 <code>17:30</code> —— 那是預估值;實際建立時間以 HTML 首次產生的檔案時間 <code>07:10 UTC</code>(= 15:10)為證,已更正。</td></tr></tbody></table></div>
 </body>
 </html>

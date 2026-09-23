@@ -37,7 +37,7 @@ figure.svg svg { max-width:100%; height:auto; }
 </head>
 <body>
 <h1>cats-inbox — Sporton 平台站內信/通知中心</h1>
-<p><strong>建立日期:</strong> 2026-08-15 08:58<br><strong>最後更新:</strong> 2026-09-23 15:50<br><strong>版本:</strong> v1.2</p>
+<p><strong>建立日期:</strong> 2026-08-15 08:58<br><strong>最後更新:</strong> 2026-09-23 15:24<br><strong>版本:</strong> v1.2</p>
 <blockquote><p>系統通知 + 公告(階段一)、人對人站內信(階段二)、不做即時聊天。<br>獨立服務,掛統一入口 <code>catsapp.sporton.com.tw/inbox/</code>;收件人一律 IdP(Keycloak)的 <code>sub</code>。</p></blockquote>
 <h2>現況</h2>
 <p>🔴 <strong>現況只在一個地方維護:<code>docs/進度表.md</code></strong>(一頁掃完:到哪裡了、卡在誰身上、測試與發版)。<br>本檔 v1.1 曾自己寫一段現況(「T01 完成、下一個任務 T03」),而它在 T03 之後就是錯的、一路錯到 2026-09-23 —— 複製的現況會漂移,所以這裡不再複製。</p>
@@ -61,6 +61,6 @@ curl -s localhost:8080/inbox/health</code></pre>
 <p>Python 3.13 + FastAPI + Jinja2(伺服器端算繪)+ PostgreSQL 15;容器 <code>cats-inbox-api</code>(上 <code>cats-edge</code>)+ <code>cats-inbox-pg</code>(僅內網);OIDC=Keycloak(confidential + PKCE);各系統以 S2S(client_credentials + scope <code>notification:push</code>)推送;未讀鈴鐺 30 秒輪詢,無 Redis/佇列/WebSocket。</p>
 <hr>
 <h2>版本歷史</h2>
-<div class="tablewrap"><table><thead><tr><th>版本</th><th>日期</th><th>修改人</th><th>摘要</th></tr></thead><tbody><tr><td>v1.2</td><td>2026-09-23</td><td>Benny</td><td>🔴 <strong>「現況」一節從 T03 起就是錯的</strong>(還寫著「T01 完成、下一個任務 T03 申請 client」「尚未接 SSO」「映像尚未建置推送」),而本檔是 repo 根目錄第一個被讀的東西。處置:<strong>不再在本檔複製現況</strong>,改指向 <code>docs/進度表.md</code>(D04 起唯一維護現況的地方,且有守門比對任務表),只留一句話摘要。文件鏈補上 D01 之後新增的五份文件(進度表、架構說明、發版 SOP、T11b 指令稿、來源接入指南);常用指令補上第九條11 的「在哪執行」標示與 <code>pg_local.sh</code>(不起它,17 支測試會 skipped)。T14a 同批發現</td></tr><tr><td>v1.1</td><td>2026-08-15</td><td>Claude(Benny)</td><td>T01 完成回寫:現況改為骨架可跑(48 項測試全綠)並誠實標註容器實際啟動未驗、映像未推送;文件鏈加入 TDD 測試計畫表;指令補測試依賴安裝與本機起服務</td></tr><tr><td>v1.0</td><td>2026-08-15</td><td>Claude(Benny)</td><td>初版:專案定位、文件鏈、常用指令、技術形態;M0 完成標記</td></tr></tbody></table></div>
+<div class="tablewrap"><table><thead><tr><th>版本</th><th>日期</th><th>修改人</th><th>摘要</th></tr></thead><tbody><tr><td>v1.2</td><td>2026-09-23</td><td>Benny</td><td>🔴 <strong>「現況」一節從 T03 起就是錯的</strong>(還寫著「T01 完成、下一個任務 T03 申請 client」「尚未接 SSO」「映像尚未建置推送」),而本檔是 repo 根目錄第一個被讀的東西。處置:<strong>不再在本檔複製現況</strong>,改指向 <code>docs/進度表.md</code>(D04 起唯一維護現況的地方,且有守門比對任務表),只留一句話摘要。文件鏈補上 D01 之後新增的五份文件(進度表、架構說明、發版 SOP、T11b 指令稿、來源接入指南);常用指令補上第九條11 的「在哪執行」標示與 <code>pg_local.sh</code>(不起它,17 支測試會 skipped)。T14a 同批發現 ⚠ <strong>時間戳更正</strong>(非實質變更,不升版):「最後更新」原寫 <code>15:50</code> —— 寫的是<strong>預估</strong>的完工時刻,而本版實際於 commit <code>6e5176b</code>(15:21)定稿;已改為以開發機 <code>date</code> 為準(契約 v2.16 記過的同一種錯)。</td></tr><tr><td>v1.1</td><td>2026-08-15</td><td>Claude(Benny)</td><td>T01 完成回寫:現況改為骨架可跑(48 項測試全綠)並誠實標註容器實際啟動未驗、映像未推送;文件鏈加入 TDD 測試計畫表;指令補測試依賴安裝與本機起服務</td></tr><tr><td>v1.0</td><td>2026-08-15</td><td>Claude(Benny)</td><td>初版:專案定位、文件鏈、常用指令、技術形態;M0 完成標記</td></tr></tbody></table></div>
 </body>
 </html>
