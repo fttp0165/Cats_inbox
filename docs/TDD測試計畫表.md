@@ -1,8 +1,8 @@
 # cats-inbox TDD 測試計畫表
 
 **建立日期:** 2026-08-15 09:40
-**最後更新:** 2026-08-25 17:40
-**版本:** v1.12
+**最後更新:** 2026-09-23 15:25
+**版本:** v1.13
 
 > 依 `docs/開發計畫書.md` §3 的架構逐元件展開:**每個任務動工前該先寫哪一支會失敗的測試**。
 > 憲法第三條:先寫紅測試釘住預期行為,才改程式;「測試全綠」指**實際跑過看到綠燈**。
@@ -48,7 +48,7 @@ Keycloak OIDC(身分)              test_auth.py(T04:RS256/aud/exp/±30s/續期)
 訊息(業務)                        test_inbox.py(T08:deny-by-default/零人名)
 公告(業務)                        test_announcements.py(T09:權限/有效期/逐人已讀)
 輸入驗證 / 跳脫 / CSP                test_security.py(T10:14 則反例、nonce、log)
-S2S 推送(系統通知)                test_push.py(T14:無 token/錯 audience → 401)
+S2S 推送(系統通知)                test_push.py(T14a:401/403 分離、逐端點 scope、來源登記、X-User-Id、去重)
 front-channel logout(SLO)         test_auth.py(T06:免認證、冪等、只刪 cookie)
 ```
 
@@ -182,18 +182,38 @@ front-channel logout(SLO)         test_auth.py(T06:免認證、冪等、只刪 c
 | T10 | 🔴 `test_security.py::test_rendered_pages_have_no_inline_style_attributes` | 算繪後的頁面不得有行內樣式屬性 | 🔴 **T10 才發現**:nonce 只對**元素**有效,`style-src 'nonce-…'` 會把 `style="…"` 屬性整批擋掉 —— 「`<style>` 帶了 nonce」**不等於**「樣式會生效」。⚠ 驗算繪後而非模板原始碼(註解裡會提到這個屬性名) |
 | T10 | `test_security.py::test_local_stylesheet_is_still_allowed_and_served` | `style-src` 含 `'self'` 且 Bootstrap 載得到 | 沒有這條的話,「CSP 嚴到把自家 CSS 也擋掉」會讓每支 CSP 測試都綠而整頁沒樣式 |
 
-### M4–M6(測試待寫)
+### M4–M6(T14a 已寫並全綠;其餘待寫)
 
 | 任務 | 紅測試 | 斷言 |
 |---|---|---|
 | T11 | 手動:`curl -skI https://catsapp.sporton.com.tw/inbox/health` | 200;且既有路由(`/plm/` `/TMP_GEN/` `/core/`)zero-diff |
 | T12 | SSO 契約 §7 冒煙清單 | 🔴 SLO 項測試前**必須清 cookie 或用無痕視窗**——否則舊 cookie 直接放行、沒走 OIDC 交換,IdP 手上沒有 client session 可通知,**端點零呼叫的症狀與「設定沒套用」完全相同**(§10.7) |
-| T14 | `test_push.py::test_push_requires_s2s_token` | 無 token / 使用者 JWT / 錯 `aud` → 一律 **401** |
-| T14 | `test_push.py::test_push_verifies_scope_per_endpoint` | token 的 `aud` 正確但**缺 `notification:push` scope** → **403**(**不是 401**)。🔴 §11.5:401=憑證無效、403=憑證有效但無此權限,**混用會讓呼叫方查不出是憑證錯還是授權不足**;§11.9 第 2 坑:只驗 `aud` 的話兩條流的 token 互打得動,**而兩邊的測試都會過**(T03b 更正 401→403) |
-| T14 | `test_push.py::test_unregistered_azp_is_denied` | 未登記的 `azp`(即使 `aud`/scope 都對)→ **403**;**不得因「來源是內網」放行** | 🔴 §11.5 第 3 條逐字:「**內網不是身分**」。`source_app` 由 `azp` 查 DB 表推導,查不到就是拒收(T03b 補) |
-| T14 | `test_push.py::test_x_user_id_is_verified_not_just_logged` | 缺 `X-User-Id` → **400**;非 UUID 形狀 → 400;等於呼叫方 service account 自身 → 400。🔴 不得「缺就當系統發出」——那會讓稽核鏈在最需要的時候恰好是空的(portal 加嚴條件) |
-| T14 | `test_push.py::test_idempotency_key_dedupes` | 同一 `Idempotency-Key` 重送 → 200 但**訊息數不變**;缺 key → 400 |
-| T14 | `test_push.py::test_source_app_ignores_body` | body 帶 `source_app: "portal"` 而呼叫方是別的 client → 以 **client 身分**為準。🔴 能自稱來源=能冒充任何系統發通知,而通知帶著平台的官方外觀 |
+| T14a | `test_push.py::test_push_requires_s2s_token` | 無 token / 使用者 JWT / 錯 `aud` → 一律 **401**。實作後具體化為 **13 格**(全部帶著一個有效的使用者 session cookie):使用者 id_token(`aud` 正好是 `cats-inbox`)、使用者 access token、`azp` 是我方、`typ=ID`、`typ=Refresh`、錯 `aud`、過期 31 秒、HS256、`alg=none`、錯 `iss`、缺 `azp`、非 JWT;401 必帶 `WWW-Authenticate: Bearer`;**正向對照**:過期 29 秒仍在 ±30s 內 → 201。🔴 `typ=ID` / `typ=Refresh` 兩格是**突變檢查前補的**:id_token 同時被 `typ` 與「azp 是我方」兩道關擋住,單獨拿掉任一道都不會紅 |
+| T14a | `test_push.py::test_push_verifies_scope_per_endpoint` | token 的 `aud` 正確但**缺 `notification:push` scope** → **403**(**不是 401**)。🔴 §11.5:401=憑證無效、403=憑證有效但無此權限,**混用會讓呼叫方查不出是憑證錯還是授權不足**;§11.9 第 2 坑:只驗 `aud` 的話兩條流的 token 互打得動,**而兩邊的測試都會過**(T03b 更正 401→403) |
+| T14a | `test_push.py::test_unregistered_azp_is_denied` | 未登記的 `azp`(即使 `aud`/scope 都對)→ **403**;**不得因「來源是內網」放行** | 🔴 §11.5 第 3 條逐字:「**內網不是身分**」。`source_app` 由 `azp` 查 DB 表推導,查不到就是拒收(T03b 補) |
+| T14a | `test_push.py::test_x_user_id_is_verified_not_just_logged` | 缺 `X-User-Id` → **400**;非 UUID 形狀 → 400;等於呼叫方 service account 自身 → 400。🔴 不得「缺就當系統發出」——那會讓稽核鏈在最需要的時候恰好是空的(portal 加嚴條件) |
+| T14a | `test_push.py::test_idempotency_key_dedupes` | 同一 `Idempotency-Key` 重送 → 200 但**訊息數不變**;缺 key → 400 |
+| T14a | `test_push.py::test_source_app_ignores_body` | body 帶 `source_app: "portal"` 而呼叫方是別的 client → 以 **client 身分**為準。🔴 能自稱來源=能冒充任何系統發通知,而通知帶著平台的官方外觀 |
+| T14a | `test_push.py::test_idempotency_window_is_24_hours` | 23:59:59 → 回放;**正好 24h → 201 新訊息**;之後同 key 回放**新的那一則**。🔴 超窗拒收會讓一個月後的重跑靜默失敗(Q3) |
+| T14a | `test_push.py::test_same_key_with_different_payload_is_422` | 同 key、主旨/內容/收件人/`action_url`/**觸發者**任一不同 → **422 且零新列**。🔴 回放的話呼叫方拿到 200 而第二則根本不存在 |
+| T14a | `test_push.py::test_idempotency_keys_are_scoped_per_caller` | 兩個來源用同一把 key → 各自 201、標籤各自正確。🔴 全域 key = B 的推送被回放成 A 的內容(跨來源外洩) |
+| T14a | `test_push.py::test_recipient_sub_must_be_a_uuid` | email / 帳號名 / 空白 / 缺段 → **400 且零列**;大寫 UUID 存成小寫。🔴 否則回 201 而**沒有任何人看得到** |
+| T14a | `test_push.py::test_push_rejects_external_action_url` | 四則外部網址經推送端點 → 400、零訊息、**零收據**(收據殘留的話下次重送會被當成回放) |
+| T14a | `test_push.py::test_body_errors_are_400_and_auth_comes_first` | **無 token + 壞 JSON → 401**(先認證後讀 body);有 token 後壞 JSON / 非物件 / 型別錯 / 空白 / 超長 / 超過 256 KiB → 一律 **400**(422 只留給同 key 不同內容) |
+| T14a | `test_push.py::test_pushed_message_reaches_recipient_inbox` | 推給**從未登入過**的人 → 他第一次登入後 API 與頁面都看得到,標籤是登記的名字、未讀 1 |
+| T14a | `test_push.py::test_push_log_has_audit_fields_but_no_content_or_token` | 成功記 `notification_pushed`(azp / actor / recipient / message_id);憑證層拒絕記 `s2s_rejected`、端點層拒絕記 `push_rejected`;**無主旨、內容、token、簽章段** |
+| T14a | `test_push.py::test_concurrent_duplicate_key_is_replayed_not_duplicated` | 以替身模擬「查的那一刻對方還沒寫入」→ 撞 `(azp, key)` 唯一約束 → 交易回滾、重試 = **回放 200**,訊息數不變 |
+| T14a | 🔴 `test_push.py::test_every_write_route_rejects_anonymous` | **列舉**所有 POST/PUT/PATCH/DELETE:匿名一律 401/403(≥ 9 支且含推送端點)。A.3「無驗證的推送端點不得部署」由一句話變成 CI 守門;M34 證明它不是空檢查 |
+| T14a | `test_push.py::test_openapi_documents_the_push_contract` | OpenAPI 有 body 四欄(**無 `source_app`**)、兩個必帶標頭、六種回應 —— body 是手動解析的,不補 `openapi_extra` 的話文件上看起來不收 body |
+| T14a | `test_push.py::test_sources_admin_requires_admin` | `reader` 看與改來源後台都 403(**帶正確的 CSRF token**,分得出是能力判定擋的)且零列 |
+| T14a | `test_push.py::test_admin_can_register_and_disable_a_source` | 登記 → 201;停用 → **立刻** 403 `source_disabled`;再啟用 → 201 |
+| T14a | `test_push.py::test_register_source_rejects_bad_values` | 空 azp / 空標籤 / 標籤 > 32 字 / azp 含空白 / 超長 / 我方 client_id → 400 零列;重複登記 400 且**不改標籤**;切換不存在 → 404 |
+| T14a | `test_push.py::test_sources_page_is_csp_clean_and_csrf_protected` | nonce 對得上、零行內樣式、零外部資源、**每個表單都有 64 字元 CSRF**(T10/T10b 的守門只看固定清單上的頁面) |
+| T14a | `test_push.py::test_source_label_is_escaped_on_every_page` | 標籤含 `<script>` → 來源後台與收件匣都輸出跳脫後的字面(且字面**在**) |
+| T14a | `test_schema.py::test_migration_0003_up_down_up` | PG:`0003` 建兩張表;降到 `0002` 兩張消失而**五張既有表留著** |
+| T14a | `test_schema.py::test_push_receipt_key_is_unique_per_caller` | PG:同 azp 同 key 第二列 → IntegrityError;不同 azp 同 key 合法 |
+| T14a | `test_schema.py::test_push_receipt_foreign_keys` | PG:`message_id` 外鍵 CASCADE(保留期隨訊息)、`azp` 外鍵**不** CASCADE(有歷史的來源刪不掉) |
+| T14a | `test_schema.py::test_source_label_fits_the_column_it_is_copied_into` | PG:`source_app.label` 欄寬 ≤ `message.source_app`。🔴 大於的話每次推送在 PG 上 500、SQLite 上無視 |
 | T16 | `test_messages.py::test_direct_message_requires_sender_role` | 無 `sender` 角色寄信 → 403 |
 | T16 | `test_messages.py::test_recipient_must_have_logged_in_before` | 收件人不在「已首登使用者」名冊 → 400(對齊 D7-7「首登才建列」) |
 
@@ -231,10 +251,11 @@ front-channel logout(SLO)         test_auth.py(T06:免認證、冪等、只刪 c
 | **發布表單層 17 項(T09b)** | ✅ 已跑、全綠(2026-08-25);含 CSRF 三態、時區的實際 UTC 值斷言 |
 | **CSRF 層 7 項(T10b)** | ✅ 已跑、全綠(2026-08-25);**列舉式守門**,新表單自動被涵蓋 |
 | **發版層 9 項(T10c)** | ✅ 已跑、全綠(2026-08-25)。🔴 **workflow 本身從未在真的 Actions 上跑過** —— 這 9 支驗的是設定與一致性,不是「建置成功」 |
-| **schema 層 10 項(T07)** | ✅ 已在**真的 PostgreSQL 16.13** 上跑過;含 model↔migration 的 schema 比對 |
-| **migration 層 3 項(T05)** | ✅ 已在**真的 PostgreSQL 16.13** 上跑過。🔴 **PG15 未演練**(本機無 PG15、無 docker daemon)——留 T11 於 VM 補;⚠ 無 PG 時本組 **skip**,`run_all.sh` 會把 skip 數量印出來 |
-| M4–M6 測試 | ⬜ **尚未撰寫**(規格見 §3;不得視為已覆蓋)。⚠ T14 的規格已於 2026-08-18 由 portal 核定,五支測試的斷言已具體化 |
-| T11 / T12 / T14–T17 測試 | ⬜ 尚未撰寫(規格見 §3)|
+| **schema 層 10 → 14 項(T07 + T14a)** | ✅ 已在**真的 PostgreSQL 16.13** 上跑過,CI 跑 PG 15;含 model↔migration 的 schema 比對(新表自動涵蓋)|
+| **推送層 22 項(T14a)** | ✅ **已跑、全綠**(2026-09-23);含 13 格的 401 矩陣、寫入路由**列舉式守門**、並行撞約束的回放、OpenAPI 契約 |
+| **migration 層 3 項(T05)** | ✅ 已在**真的 PostgreSQL 16.13** 上跑過;✅ **PG 15 自 T05b 起由 CI 每次 push 都跑**(`postgres:15.8-alpine`,與 VM 同一個 tag;`ci #46` 起 0 skipped)。~~PG15 未演練——留 T11 於 VM 補~~(2026-09-23 更正:這一句自 T05b 起就不成立,本表當時沒有同步)。⚠ 無 PG 時本組 **skip**,`run_all.sh` 會把 skip 數量印出來 |
+| M4–M6 測試 | ✅ **T14a 已撰寫並全綠**(22 + 4 支);⬜ 其餘尚未撰寫(規格見 §3;不得視為已覆蓋) |
+| T11b / T12 / T14b / T15–T17 測試 | ⬜ 尚未撰寫(規格見 §3)。T14b 是真憑證的冒煙,腳本在 `docs/來源接入指南.md` §7 |
 | 真 IdP / gateway 冒煙 | ⬜ **尚未執行**(client 已核發,但 secret 尚未進本服務;需 T11 路由。CI 跑不動) |
 | `docker compose config` 解析 | ✅ 已於本機驗過(Compose v5.1.1);**容器實際啟動尚未驗**(本環境無 docker daemon) |
 
@@ -510,12 +531,36 @@ JSON 欄位就是那個面。已補兩條:①API 回應不得出現快取的姓�
 ②用 `pytest tests/test_docs.sh` 當選擇器 → **rc=4**,而 §5.9 加的守門
 報「選擇器選不到任何測試」而**不是**假 ✅ —— 那道守門這次證明了自己有用。
 
+
+### 5.13 突變檢查(T14a,2026-09-23)
+
+**36 項全被抓到**(M01–M36;逐項見 dev-log `2026-09-23_T14a_推送API本體.md`)。四項值得記:
+
+| 故意改壞 | 對應測試 | 結果 |
+|---|---|---|
+| M01 拿掉 `typ == Bearer` | `test_push_requires_s2s_token` 的 **`typ=ID` 那一格** | ✅ 紅 —— 🔴 那一格是**跑突變之前才補的**,見下 |
+| M24 登記來源不驗 CSRF | T10b 的 `test_every_form_post_route_requires_csrf` | ✅ 紅 —— 列舉式守門**自動**涵蓋新表單(3 → 5 支,沒人改那支測試) |
+| M34 新增一個沒有認證的寫入端點 | `test_every_write_route_rejects_anonymous` | ✅ 紅 —— 證明新守門**不是空檢查** |
+| M23′ / M31′ | 見下 | ✅ 紅在預期的斷言上 |
+
+🔴 **一個「兩道守門擋同一個案例」的盲點(第七次「粒度」的變形)。**
+計畫段寫「`typ` 是唯一擋得住使用者 id_token 的關」,而 id_token 的 `azp` 就是我方 ——
+「azp 是我方 → 401」**也**擋得住它。兩道關擋同一格,**單獨拿掉任一道,那一格照樣是 401**。
+排突變清單時發現,補上 `typ=ID` / `typ=Refresh`(其餘全對,只有 `typ` 擋得住)才開始跑。
+⚠ 與 §5.12 記的形狀是**姊妹**:那裡是「斷言的粒度比性質粗」;這裡是「**案例同時滿足兩個性質**,
+於是它證明不了任何一個」。🔴 寫反例時要問:**這一格被擋下,可能是哪幾道關的功勞?**
+
+🔴 **「抓到了」要看是哪一行抓到的。** M23 與 M31 的第一版都紅了,但紅在錯的地方:
+M23 把參數寫成 `caller: S2SCaller = None`,FastAPI 把 dataclass 當成 **body**,紅在另一支的正向對照;
+M31 在 `-x` 下先紅在 `0002` 那支。以「只跑預期的那一支、看紅在哪一行」重跑(M23′ / M31′)才算數。
+
 ---
 
 ## 版本歷史
 
 | 版本 | 日期 | 修改人 | 摘要 |
 |---|---|---|---|
+| v1.13 | 2026-09-23 | Benny | **T14a 完工回寫**:§2 對應表改寫推送列;§3 原 6 列 T14 → **T14a 26 列**(6 支核定規格保留原斷言並具體化 + 16 支自加 + 4 支 PG schema),逐支寫出「壞掉時沒有症狀」的理由;§5 覆蓋現況加**推送層 22 項**、schema 層 10 → 14;🔴 **更正一句自 T05b 起就不成立的話**:migration 層那列仍寫「PG15 未演練——留 T11 於 VM 補」,而 CI 自 `ci #46` 起每次 push 都跑 PG 15.8(T05b 回寫了四份文件,**本表不在那一批裡**);新增 §5.13 突變檢查 **36/36**,記兩個形狀:「兩道守門擋同一個案例」(單獨拿掉任一道都不會紅)與「抓到了要看是哪一行抓到的」|
 | v1.12 | 2026-08-25 | Benny | **T10c 完工回寫**:§3 新增 T10c 的 **8 列**(含**改寫**後的 `test_docs.sh` 清單自動產生);§5 覆蓋現況加**發版層 9 項**並誠實標「**workflow 本身從未在真的 Actions 上跑過**,這 9 支驗的是設定與一致性,不是建置成功」;新增 §5.12 突變檢查 **15/15**。🔴 §5.12 指出**連續第三輪的同一種形狀**:**斷言的粒度比它宣稱保護的性質粗** ——「字串在不在全文」比「那個標題存在」粗、「欄位名在不在」比「token 有效」粗、「整頁有沒有那個詞」比「錯誤框裡寫了什麼」粗;寫斷言時要問**「我要保護的性質,能不能被一個更粗的東西湊巧滿足?」**。⚠ 另記兩處工具錯誤,而 §5.9 加的「選擇器選不到測試」守門這次證明了自己有用 |
 | v1.11 | 2026-08-25 | Benny | **T10b 完工回寫**:§3 新增 T10b 的 **8 列**(含**改寫**後的 `test_every_html_response_has_csp`);§5 覆蓋現況加 **CSRF 層 7 項**;新增 §5.11 突變檢查 **13/13**。🔴 **記下一個既有守門的洞**:T10 的「列舉所有 HTML 路由」實際上**只驗到自動產生的文件頁**——`app.routes` 看不到 `_IncludedRouter` 底下的路由,而「至少 3 個」剛好被 3 個文件頁滿足;已改走新的 `iter_routes()` 並補「三個真頁面必須在列舉結果裡」。⚠ 且列舉會打到 `/inbox/logout`,它**清掉 session**,後面的頁面被靜靜跳過 ——改成每支之前重新登入。⚠ §5.11 記下連續第二輪抓到**測試本身**的邏輯錯誤,兩輪的共同形狀是**斷言的粒度比它宣稱保護的性質粗** |
 | v1.10 | 2026-08-25 | Benny | **T09b 完工回寫**:§3 新增 T09b 的 **8 列**(CSRF 三態、時區的實際 UTC 值、五種 400 的「錯誤框內 + 保留輸入」、入口連結雙向、303、CSP 乾淨);§5 覆蓋現況加**發布表單層 17 項**;新增 §5.10 突變檢查 **19/19**。🔴 §5.10 記下**三個測試洞**,共同形狀是**斷言的對象裡本來就含有我要找的字串**——三者都讓測試看起來嚴格而**永遠通過**,而只跑一次是綠的不會有任何線索。⚠ 這是突變檢查第一次抓到**測試本身**的邏輯錯誤;前三次(§5.7–5.9)抓到的都是**量測工具**的問題。兩類都要防 |

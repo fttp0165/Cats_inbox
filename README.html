@@ -37,25 +37,30 @@ figure.svg svg { max-width:100%; height:auto; }
 </head>
 <body>
 <h1>cats-inbox — Sporton 平台站內信/通知中心</h1>
-<p><strong>建立日期:</strong> 2026-08-15 08:58<br><strong>最後更新:</strong> 2026-08-15 09:58<br><strong>版本:</strong> v1.1</p>
+<p><strong>建立日期:</strong> 2026-08-15 08:58<br><strong>最後更新:</strong> 2026-09-23 15:50<br><strong>版本:</strong> v1.2</p>
 <blockquote><p>系統通知 + 公告(階段一)、人對人站內信(階段二)、不做即時聊天。<br>獨立服務,掛統一入口 <code>catsapp.sporton.com.tw/inbox/</code>;收件人一律 IdP(Keycloak)的 <code>sub</code>。</p></blockquote>
 <h2>現況</h2>
-<p><strong>T01 完成(2026-08-15):</strong> 服務骨架可跑——<code>GET /inbox/health</code> 回 200(不查 DB)、compose 網路隔離與容器紅線以測試釘住、CI 綠。測試 48 項全綠(文件 25 + 骨架 19 + 應用 4)。<br>⚠ <strong>容器實際啟動尚未驗</strong>(開發環境無 docker daemon),留 T11 於 VM 部署時補;映像 tag <code>ghcr.io/fttp0165/cats-inbox-api:0.1.0</code> 尚未建置推送。<br>下一個任務:<strong>T03 申請 Keycloak client</strong>(T02 回寫 portal 設計規劃可並行)。</p>
+<p>🔴 <strong>現況只在一個地方維護:<code>docs/進度表.md</code></strong>(一頁掃完:到哪裡了、卡在誰身上、測試與發版)。<br>本檔 v1.1 曾自己寫一段現況(「T01 完成、下一個任務 T03」),而它在 T03 之後就是錯的、一路錯到 2026-09-23 —— 複製的現況會漂移,所以這裡不再複製。</p>
+<p>一句話(2026-09-23):M0–M3 完成;<code>v0.1.1</code> 在 CATS VM 上跑著但<strong>還不能從入口到達</strong>(T11b 的 C/D 段);<br>推送 API 本體已完成(T14a)但<strong>未部署</strong>,接上第一個來源等 DI-4 與第一張憑證(T14b)。</p>
 <h2>文件鏈(md 為權威,HTML 為發布版)</h2>
-<div class="tablewrap"><table><thead><tr><th>讀什麼</th><th>位置</th></tr></thead><tbody><tr><td>開發憲法(最高準則)</td><td><code>CLAUDE.md</code></td></tr><tr><td>開發計畫書(when/who/how)</td><td><code>docs/開發計畫書.md</code></td></tr><tr><td>任務表(逐任務追蹤)</td><td><code>docs/任務表.md</code></td></tr><tr><td>TDD 測試計畫表(每任務先寫哪支紅測試)</td><td><code>docs/TDD測試計畫表.md</code></td></tr><tr><td>開發日誌(逐任務證據)</td><td><code>docs/dev-logs/</code></td></tr><tr><td>功能上游(what/why)</td><td>cats-portal <code>DOCS/站內信通知中心設計規劃.md</code> v1.3(選址變更見計畫書 §1.2)</td></tr></tbody></table></div>
+<div class="tablewrap"><table><thead><tr><th>讀什麼</th><th>位置</th></tr></thead><tbody><tr><td>開發憲法(最高準則)</td><td><code>CLAUDE.md</code></td></tr><tr><td><strong>現在到哪裡了</strong></td><td><code>docs/進度表.md</code></td></tr><tr><td>開發計畫書(when/who/how)</td><td><code>docs/開發計畫書.md</code></td></tr><tr><td>任務表(逐任務追蹤)</td><td><code>docs/任務表.md</code></td></tr><tr><td>TDD 測試計畫表(每任務先寫哪支紅測試)</td><td><code>docs/TDD測試計畫表.md</code></td></tr><tr><td>架構說明(商業邏輯 · 技術架構 · 介面概念)</td><td><code>docs/架構說明.md</code></td></tr><tr><td>發版 SOP</td><td><code>docs/發版SOP.md</code></td></tr><tr><td>T11b 上線指令稿(可貼版)</td><td><code>docs/T11b上線指令稿.md</code></td></tr><tr><td><strong>給來源系統:推送 API 接入指南</strong></td><td><code>docs/來源接入指南.md</code></td></tr><tr><td>SSO 接入申請 · 契約對齊盤點</td><td><code>docs/SSO接入申請.md</code> · <code>docs/契約對齊盤點_v3.3.md</code></td></tr><tr><td>開發日誌(逐任務證據)</td><td><code>docs/dev-logs/</code></td></tr><tr><td>功能上游(what/why)</td><td>cats-portal <code>DOCS/站內信通知中心設計規劃.md</code>(已對齊版本見 <code>CLAUDE.md</code> A.2)</td></tr></tbody></table></div>
 <h2>常用指令</h2>
-<p>跑測試(CI 同入口;首次需先裝測試依賴):</p>
+<p>跑測試(CI 同入口)。🔴 <strong>第一行決定那 17 支 migration/schema 測試是「跑過」還是「skipped」</strong> —— 沒有真 PostgreSQL 時它們會跳過,而跳過與通過在輸出上長得很像:</p>
+<blockquote><p>🖥️ <strong>在哪執行:</strong> WSL(Ubuntu)· 工作目錄 ~/Cats_inbox · 分支 <code>claude/cats-inbox-development-plan-ghwd9s</code></p></blockquote>
 <pre><code>pip install -r requirements-dev.txt
+eval "$(bash tests/pg_local.sh start)"
 bash tests/run_all.sh</code></pre>
-<p>本機起服務(尚未接 SSO,只有健康檢查):</p>
+<p>本機起服務(未設 OIDC 環境變數時只有健康檢查;設齊之後登入、收件匣、公告、推送 API 才會註冊):</p>
+<blockquote><p>🖥️ <strong>在哪執行:</strong> WSL(Ubuntu)· 工作目錄 ~/Cats_inbox</p></blockquote>
 <pre><code>uvicorn app.main:app --host 0.0.0.0 --port 8080
 curl -s localhost:8080/inbox/health</code></pre>
 <p>重產正式文件的 HTML 版(第四條;<code>--check</code> 只驗同步不寫檔):</p>
+<blockquote><p>🖥️ <strong>在哪執行:</strong> WSL(Ubuntu)· 工作目錄 ~/Cats_inbox</p></blockquote>
 <pre><code>python3 tools/render_docs.py</code></pre>
 <h2>技術形態(定案於開發計畫書 §3)</h2>
-<p>Python 3.13 + FastAPI + Jinja2(伺服器端算繪)+ PostgreSQL 15;容器 <code>cats-inbox-api</code>(上 <code>cats-edge</code>)+ <code>cats-inbox-pg</code>(僅內網);OIDC=Keycloak(confidential + PKCE);未讀鈴鐺 30 秒輪詢,無 Redis/佇列/WebSocket。</p>
+<p>Python 3.13 + FastAPI + Jinja2(伺服器端算繪)+ PostgreSQL 15;容器 <code>cats-inbox-api</code>(上 <code>cats-edge</code>)+ <code>cats-inbox-pg</code>(僅內網);OIDC=Keycloak(confidential + PKCE);各系統以 S2S(client_credentials + scope <code>notification:push</code>)推送;未讀鈴鐺 30 秒輪詢,無 Redis/佇列/WebSocket。</p>
 <hr>
 <h2>版本歷史</h2>
-<div class="tablewrap"><table><thead><tr><th>版本</th><th>日期</th><th>修改人</th><th>摘要</th></tr></thead><tbody><tr><td>v1.0</td><td>2026-08-15</td><td>Claude(Benny)</td><td>初版:專案定位、文件鏈、常用指令、技術形態;M0 完成標記</td></tr><tr><td>v1.1</td><td>2026-08-15</td><td>Claude(Benny)</td><td>T01 完成回寫:現況改為骨架可跑(48 項測試全綠)並誠實標註容器實際啟動未驗、映像未推送;文件鏈加入 TDD 測試計畫表;指令補測試依賴安裝與本機起服務</td></tr></tbody></table></div>
+<div class="tablewrap"><table><thead><tr><th>版本</th><th>日期</th><th>修改人</th><th>摘要</th></tr></thead><tbody><tr><td>v1.2</td><td>2026-09-23</td><td>Benny</td><td>🔴 <strong>「現況」一節從 T03 起就是錯的</strong>(還寫著「T01 完成、下一個任務 T03 申請 client」「尚未接 SSO」「映像尚未建置推送」),而本檔是 repo 根目錄第一個被讀的東西。處置:<strong>不再在本檔複製現況</strong>,改指向 <code>docs/進度表.md</code>(D04 起唯一維護現況的地方,且有守門比對任務表),只留一句話摘要。文件鏈補上 D01 之後新增的五份文件(進度表、架構說明、發版 SOP、T11b 指令稿、來源接入指南);常用指令補上第九條11 的「在哪執行」標示與 <code>pg_local.sh</code>(不起它,17 支測試會 skipped)。T14a 同批發現</td></tr><tr><td>v1.1</td><td>2026-08-15</td><td>Claude(Benny)</td><td>T01 完成回寫:現況改為骨架可跑(48 項測試全綠)並誠實標註容器實際啟動未驗、映像未推送;文件鏈加入 TDD 測試計畫表;指令補測試依賴安裝與本機起服務</td></tr><tr><td>v1.0</td><td>2026-08-15</td><td>Claude(Benny)</td><td>初版:專案定位、文件鏈、常用指令、技術形態;M0 完成標記</td></tr></tbody></table></div>
 </body>
 </html>
