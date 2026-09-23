@@ -29,9 +29,12 @@
     button { font-size:.85rem; padding:.15rem .5rem; cursor:pointer; }
     form.inline { display:inline; }
     .stamp { color:#8b949e; font-size:.8rem; display:block; }
+    .nav { margin:0 0 1rem; font-size:.9rem; }
   </style>
 </head>
 <body>
+  {# T14a:推送來源登記在另一頁(同為 admin 專屬) #}
+  <p class="nav"><a href="{{ base_path }}/admin/sources">推送來源登記 →</a></p>
   <h1>角色後台</h1>
   <p class="note">
     自動授 <code>reader</code>:{% if auto_grant_reader %}<strong>開啟</strong>{% else %}<strong>關閉</strong>(portal 已撤回核可,或本地刻意關閉){% endif %}。

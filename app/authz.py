@@ -39,6 +39,9 @@ CAP_READ_OWN = "read_own"                      # 讀自己的訊息/標自己已
 CAP_SEND_MESSAGE = "send_message"
 CAP_PUBLISH_ANNOUNCEMENT = "publish_announcement"
 CAP_MANAGE_ROLES = "manage_roles"
+# T14a:來源登記表(登記 / 停用推送來源)。只給 admin。
+# 🔴 它決定「誰能以平台的名義發通知給任何人」—— 權力比派角色小不到哪裡去。
+CAP_MANAGE_SOURCES = "manage_sources"
 
 # 🔴 這張表就是「範圍」本身。加一項之前先問:**它是否仍限於自我範圍讀取?**
 #    `reader` 那一列若多出任何一個能力,DEC-16 的核可基礎就不成立了。
@@ -49,7 +52,7 @@ ROLE_CAPABILITIES: dict[str, frozenset[str]] = {
     # ⚠ admin **刻意不含** CAP_READ_OWN:管身分與讀信是兩件事。
     #   管理員也需要讀自己的信時,他身上另外有 reader(首登就有)。
     #   把兩者綁在一起會讓「單獨停用 reader」對管理員失效(C2)。
-    ROLE_ADMIN: frozenset({CAP_MANAGE_ROLES}),
+    ROLE_ADMIN: frozenset({CAP_MANAGE_ROLES, CAP_MANAGE_SOURCES}),
 }
 
 

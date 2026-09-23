@@ -1,0 +1,98 @@
+{# 推送來源登記(T14a)。零外部資源、light 寫死(憲法第四條 1/2)。
+
+   🔴 這一頁決定「**誰能以平台的名義發通知給任何人**」:登記一個 `azp`,
+      等於讓那個 client 每一張帶 `notification:push` 的 token 都能推。
+   🔴 **每一個 `<form>` 都必須帶 `csrf_token` 的 hidden input**(T10b)。
+      守門:`tests/test_push.py::test_sources_page_is_csp_clean_and_csrf_protected`
+      (抓出頁上每一個 `<form>` 逐一檢查,新表單自動被涵蓋)。
+   🔴 **嚴格 CSP**:`<style>` 帶逐請求 nonce;**`style="…"` 屬性一律不可用**
+      (nonce 對屬性無效,會被擋掉,而症狀是版面走鐘且伺服器零錯誤)。
+   ⚠ 標籤一律以 Jinja2 預設跳脫輸出(不用 `|safe`)—— 它由管理員輸入,
+     之後以「寄件人」的身分出現在**每一個收件人**的收件匣。 #}
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>推送來源 — 站內信</title>
+  <style nonce="{{ request.state.csp_nonce }}">
+    :root { color-scheme: light; }
+    body { margin:0; padding:2rem; background:#f6f7f9; color:#1f2328;
+           font-family: system-ui, -apple-system, "Segoe UI", "Noto Sans TC", sans-serif; }
+    h1 { font-size:1.25rem; margin:0 0 .25rem; }
+    h2 { font-size:1rem; margin:1.75rem 0 .5rem; }
+    .note { color:#57606a; font-size:.9rem; margin:0 0 1.25rem; line-height:1.7; }
+    .note li { margin:.15rem 0; }
+    table { border-collapse:collapse; background:#fff; width:100%;
+            border:1px solid #d8dee4; border-radius:6px; overflow:hidden; }
+    th, td { text-align:left; padding:.6rem .75rem; border-bottom:1px solid #eaeef2;
+             font-size:.92rem; vertical-align:top; }
+    th { background:#f6f8fa; font-weight:600; }
+    tr:last-child td { border-bottom:none; }
+    code { font-size:.85rem; word-break:break-all; }
+    .off { color:#8b949e; }
+    .on { color:#1a7f37; font-weight:600; }
+    .stamp { color:#8b949e; font-size:.8rem; display:block; }
+    button { font-size:.85rem; padding:.2rem .6rem; cursor:pointer; }
+    form.inline { display:inline; }
+    form.register { background:#fff; border:1px solid #d8dee4; border-radius:6px;
+                    padding:1rem; display:flex; gap:.75rem; flex-wrap:wrap; align-items:flex-end; }
+    label.field { display:flex; flex-direction:column; font-size:.85rem; color:#57606a; gap:.25rem; }
+    input[type=text] { font-size:.9rem; padding:.3rem .45rem; min-width:14rem; }
+    .nav { margin:0 0 1rem; font-size:.9rem; }
+    .empty { color:#57606a; background:#fff; border:1px dashed #d0d7de; border-radius:6px;
+             padding:1rem; }
+  </style>
+</head>
+<body>
+  <p class="nav"><a href="{{ base_path }}/admin/users">← 角色後台</a></p>
+  <h1>推送來源</h1>
+  <ul class="note">
+    <li>只有<strong>登記且啟用</strong>的來源推得進來;未登記一律 403(deny-by-default,<strong>內網不是身分</strong>)。</li>
+    <li><code>azp</code> 是來源系統的 <strong>S2S client_id</strong>(契約 §11 的形態是 <code>&lt;client_id&gt;-sa</code>),
+        它的 token 還必須帶 scope <code>{{ scope }}</code>。不能登記本服務自己的 <code>{{ own_client_id }}</code>。</li>
+    <li>標籤會以<strong>寄件人</strong>的位置顯示給每一個收件人:請填<strong>系統名</strong>(例「TRF 系統」),
+        <strong>不得填人名</strong>(階段一零人名)。最多 {{ label_max }} 字;本頁<strong>不提供改名</strong>(刻意:寄件人名稱的變更不該是一個順手的按鈕)。</li>
+    <li>停用<strong>即時生效</strong>,不需重啟;已送出的通知不受影響。</li>
+  </ul>
+
+  {% if rows %}
+  <table>
+    <tr><th>azp</th><th>標籤</th><th>狀態</th><th>登記</th><th></th></tr>
+    {% for row in rows %}
+    <tr>
+      <td><code>{{ row.azp }}</code></td>
+      <td>{{ row.label }}</td>
+      <td>{% if row.enabled %}<span class="on">啟用</span>{% else %}<span class="off">已停用</span>{% endif %}</td>
+      <td>
+        <span class="stamp">{{ row.created_at }}</span>
+        <span class="stamp">by <code>{{ row.created_by }}</code></span>
+      </td>
+      <td>
+        <form class="inline" method="post" action="{{ base_path }}/admin/sources/enabled">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+          <input type="hidden" name="azp" value="{{ row.azp }}">
+          <input type="hidden" name="enabled" value="{{ '0' if row.enabled else '1' }}">
+          <button type="submit">{{ '停用' if row.enabled else '啟用' }}</button>
+        </form>
+      </td>
+    </tr>
+    {% endfor %}
+  </table>
+  {% else %}
+  <p class="empty">尚未登記任何來源 —— 目前推送端點對所有呼叫方一律 403。</p>
+  {% endif %}
+
+  <h2>登記新來源</h2>
+  <form class="register" method="post" action="{{ base_path }}/admin/sources">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <label class="field">azp(S2S client_id)
+      <input type="text" name="azp" placeholder="compliance-sa" maxlength="255" required>
+    </label>
+    <label class="field">標籤(寄件人顯示名,系統名)
+      <input type="text" name="label" placeholder="TRF 系統" maxlength="{{ label_max }}" required>
+    </label>
+    <button type="submit">登記</button>
+  </form>
+</body>
+</html>

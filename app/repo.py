@@ -1,8 +1,11 @@
 # -*- coding: utf-8 -*-
-"""身分與角色的資料存取(唯一會寫 `app_user` / `user_role` 的地方)。
+"""資料存取層:本服務**唯一**寫資料庫的地方。
 
-用途: 首登建號、bootstrap 清單比對、角色授與/停用、L1 快取清除。
+用途: 首登建號、bootstrap 清單比對、角色授與/停用、L1 快取清除(T05);
+      訊息讀取與標已讀(T08);公告(T09);訊息的唯一寫入路徑(T10);
+      來源登記表與推送去重(T14a)。
 副作用: **寫資料庫**。每個函式都標明它寫了什麼。
+(⚠ 本行原寫「唯一會寫 `app_user` / `user_role` 的地方」—— T07 起就不只了,T14a 時更正。)
 
 🔴 `display_name` 的**唯一寫入路徑**在本檔的 `ensure_user_on_login()`。
    以 `tests/test_authz.py::test_display_name_only_written_from_own_login_token`
@@ -13,7 +16,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import and_, func, or_, select
 from sqlalchemy.orm import Session
@@ -21,12 +24,16 @@ from sqlalchemy.orm import Session
 from app.authz import ALL_ROLES, ROLE_ADMIN, ROLE_READER
 from app.models import (
     AUDIENCE_ALL,
+    AZP_MAX,
     CATEGORIES,
     CATEGORY_SYSTEM,
+    SOURCE_LABEL_MAX,
     Announcement,
     AnnouncementRead,
     AppUser,
     Message,
+    PushReceipt,
+    SourceApp,
     UserRole,
 )
 
@@ -425,3 +432,172 @@ def create_message(
     session.add(row)
     session.flush()
     return row
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# T14a:來源登記表(`azp` → 顯示標籤 + 啟用旗標)
+#
+# 🔴 我方 2026-08-24 答覆 portal Q2 的落點:「新增來源=管理後台加一列;
+#    可停用單一來源而不動程式」。未登記的 `azp` 一律 403(`app/s2s.py`)。
+# ═══════════════════════════════════════════════════════════════════════
+
+
+def get_source_app(session: Session, azp: str) -> SourceApp | None:
+    """依 `azp` 取來源;不存在回 None。"""
+    return session.get(SourceApp, azp)
+
+
+def list_source_apps(session: Session) -> list[SourceApp]:
+    """列出全部來源(登記先後排序),供後台顯示。"""
+    return list(session.scalars(select(SourceApp).order_by(SourceApp.created_at, SourceApp.azp)))
+
+
+def register_source_app(session: Session, *, azp: str, label: str, created_by: str) -> SourceApp:
+    """登記一個來源系統。
+
+    參數:
+      azp        — 呼叫方的 client_id(契約 §11 的形態是 `<client_id>-sa`)
+      label      — 顯示標籤,以「寄件人」的位置顯示給**每一個收件人**
+      created_by — 登記者(管理員的 sub)
+    回傳: SourceApp
+    副作用: INSERT 一列 `source_app`
+    錯誤: 值不合法或已登記 → BadRequest(400),且**不寫入任何東西**
+
+    🔴 **已登記就 400,不默默改標籤。** 標籤是收件人看到的「寄件人」,
+       一個會順手覆寫的「登記」按鈕,會讓一次打錯 azp 的操作改掉另一個系統的名字
+       —— 而畫面上只是一個成功的 303。
+    ⚠ 「不得登記我方自己的 client_id」這條在**後台路由**(它要讀設定),不在這裡。
+    """
+    from app.validation import BadRequest, require_text
+
+    key = (azp or "").strip()
+    if not key or len(key) > AZP_MAX or any(ch.isspace() or ord(ch) < 0x20 for ch in key):
+        raise BadRequest("invalid_azp", f"azp 必須是 1–{AZP_MAX} 字、不含空白的 client_id")
+    safe_label = require_text(label, field="label", max_length=SOURCE_LABEL_MAX)
+    if session.get(SourceApp, key) is not None:
+        raise BadRequest("source_already_registered", "這個 azp 已登記;要停用請用停用按鈕")
+    row = SourceApp(azp=key, label=safe_label, enabled=True, created_by=created_by,
+                    created_at=_utcnow())
+    session.add(row)
+    session.flush()
+    return row
+
+
+def set_source_app_enabled(session: Session, *, azp: str, enabled: bool) -> bool:
+    """啟用/停用一個來源。
+
+    回傳: 是否有找到那一列
+    副作用: UPDATE 一列 `source_app`
+
+    🔴 **停用而不刪除**:有推送歷史的來源,它的稽核收據指著它。
+    ⚠ 生效是**即時**的 —— `app/s2s.py` 每次請求都查,不快取。
+    """
+    row = session.get(SourceApp, (azp or "").strip())
+    if row is None:
+        return False
+    row.enabled = enabled
+    session.flush()
+    return True
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# T14a:推送(`Idempotency-Key` 去重)
+#
+# 🔴 窗口 24 小時(我方 2026-08-24 答覆 Q3),**寫死**:
+#    下限由重試策略決定(§11.6:重試 ≤2 次 + 指數退避,秒到分鐘級),
+#    24 小時涵蓋「呼叫方排程整批重跑」這種最長的合理重送。
+#    ⚠ **這是推理值,不是實測** —— 上線後若出現「同一事件隔天重複出現」,往上調。
+# ═══════════════════════════════════════════════════════════════════════
+PUSH_IDEMPOTENCY_WINDOW = timedelta(hours=24)
+
+
+def _as_utc(value: datetime) -> datetime:
+    """把資料庫取回的時間統一成帶 UTC 的 datetime。
+
+    ⚠ naive 只會在 **SQLite** 上出現(它不存時區;PG 的 `timestamptz` 會保留),
+      而我方寫入的一律是 UTC —— 與 `app/validation.py::iso_utc` 同一個理由。
+    """
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
+def find_push_receipt(session: Session, *, azp: str, idempotency_key: str) -> PushReceipt | None:
+    """依 `(azp, key)` 取收據;不存在回 None。
+
+    ⚠ 刻意是模組層函式:測試以它模擬「查的那一刻,並行的另一個請求還沒寫入」
+      (`tests/test_push.py::test_concurrent_duplicate_key_is_replayed_not_duplicated`)。
+    """
+    return session.scalar(
+        select(PushReceipt).where(
+            PushReceipt.azp == azp, PushReceipt.idempotency_key == idempotency_key
+        )
+    )
+
+
+def push_notification(
+    session: Session,
+    *,
+    azp: str,
+    source_app: str,
+    idempotency_key: str,
+    request_hash: str,
+    actor_sub: str,
+    recipient_sub: str,
+    subject: str,
+    body: str,
+    action_url: str | None,
+    now: datetime,
+):
+    """一次推送:**24h 內同 key 回放、不同內容 422、否則建一則系統通知 + 收據**。
+
+    參數:
+      azp / source_app — 來自**已驗證的呼叫方**(`app/s2s.py`),不是 request body
+      request_hash     — 請求內容的 SHA-256;同 key 不同 hash → 422
+      actor_sub        — `X-User-Id`(已驗過形狀、已正規化)
+      now              — 判定窗口用的當下(帶 UTC;測試可注入)
+    回傳: (message_id, replayed: bool)
+    副作用: 首次 → INSERT `message` + INSERT `push_receipt`;
+            超窗 → INSERT `message` + UPDATE 那一列收據;回放 → 無
+    錯誤: 內容不合法 → BadRequest(400);同 key 不同內容 → IdempotencyKeyReused(422);
+          並行的同 key 已先寫入 → `IntegrityError`(由呼叫端回滾後重試一次 = 回放)
+
+    🔴 **訊息一律經 `create_message()` 建立** —— T10 把 `action_url` 白名單、
+       純文字與長度的關卡設在那裡,理由正是「推送 API 動工時,驗證是附帶工作」。
+       本函式**只能穿過它**(AST 守門:`app/` 底下只有它構造 `Message`)。
+    🔴 **超窗視為新訊息,不拒收**(Q3):拒收會讓一個月後的重跑靜默失敗,
+       而「通知沒送到」是本系統最糟的失效模式 —— 寧可重複一次,也不要靜默丟掉。
+       超窗時**覆寫**那一列收據指向新訊息(唯一約束只容得下一列;舊的關聯仍在 log)。
+    ⚠ 已知且接受:兩個請求**同時**以一把**已過期**的 key 進來時,兩者都會建立新訊息
+      (UPDATE 不會撞唯一約束)。後果是重複一則,不是遺失 —— 依 Q3 的取捨接受。
+    """
+    from app.validation import IdempotencyKeyReused
+
+    receipt = find_push_receipt(session, azp=azp, idempotency_key=idempotency_key)
+    if receipt is not None and _as_utc(receipt.created_at) > now - PUSH_IDEMPOTENCY_WINDOW:
+        if receipt.request_hash != request_hash:
+            raise IdempotencyKeyReused()
+        return receipt.message_id, True
+
+    msg = create_message(
+        session,
+        recipient_sub=recipient_sub,
+        subject=subject,
+        body=body,
+        action_url=action_url,
+        source_app=source_app,      # 🔴 來自登記表,不是 body
+        sender_sub=None,            # 系統發出(上游 §4.1);觸發者記在收據上,不冒充寄件人
+        category=CATEGORY_SYSTEM,
+    )
+    if receipt is None:
+        session.add(PushReceipt(
+            azp=azp, idempotency_key=idempotency_key, request_hash=request_hash,
+            message_id=msg.id, actor_sub=actor_sub, created_at=now,
+        ))
+    else:
+        receipt.request_hash = request_hash
+        receipt.message_id = msg.id
+        receipt.actor_sub = actor_sub
+        receipt.created_at = now
+    session.flush()
+    return msg.id, False

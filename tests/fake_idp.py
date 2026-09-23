@@ -35,6 +35,16 @@ CLIENT_ID = "cats-inbox"
 # 🔴 client 登記的 redirect URI,**帶結尾斜線**。逐字比對用,不得「差不多」。
 REGISTERED_REDIRECT_URI = "https://catsapp.sporton.com.tw/inbox/oidc/callback/"
 
+# ── T14a:S2S(client_credentials)替身 ──────────────────────────────
+# 假的來源系統 S2S client。命名依契約 §11 的 `<client_id>-sa` 形態。
+S2S_AZP = "compliance-sa"
+# 該 client 的 **service account 使用者**的 sub(Keycloak 為每個啟用 service account
+# 的 client 建一個隱藏使用者,client_credentials 簽出的 token 的 `sub` 就是它)。
+# 🔴 `X-User-Id` 不得等於這個值(portal 加嚴條件:「不得等於呼叫方自身」)。
+S2S_SA_SUB = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"
+# 推送端點要求的 scope(契約 §11:`<資源>:<動作>`,optional client scope 帶 audience)
+S2S_SCOPE = "notification:push"
+
 
 def _b64u(raw: bytes) -> str:
     """base64url 無 padding 編碼(JWK 與 at_hash 都用這個形式)。"""
@@ -216,6 +226,16 @@ class FakeIdP:
         #    不帶 kid 的假 token 會在「找不到 kid」那一關就被擋下來,
         #    於是「我方有沒有擋 alg」這件事**根本沒被測到**——
         #    測試會綠,但綠的理由不是它宣稱的那個。
+        #    (T14a 起簽章抽到 `_sign`,讓 `access_token` 走同一條路 ——
+        #     兩份各寫一次的話,其中一份遲早會忘了帶 kid。)
+        return self._sign(claims, kid=kid, alg=alg)
+
+    def _sign(self, claims: dict, *, kid: str, alg: str) -> str:
+        """依 `alg` 簽出 JWT(`id_token` 與 `access_token` 共用)。
+
+        🔴 簽錯演算法的假 token **一律帶上真實存在的 `kid`** —— 理由見
+           `id_token` 裡的說明(alg confusion 的標準做法就是抄走真 token 的 kid)。
+        """
         if alg == "none":
             # PyJWT 不讓你輕鬆簽 alg=none,手工組:這才是攻擊者實際會送的形狀
             header = _b64u(json.dumps({"alg": "none", "typ": "JWT", "kid": kid}).encode())
@@ -226,6 +246,108 @@ class FakeIdP:
             return jwt.encode(
                 claims, "not-really-a-secret", algorithm="HS256", headers={"kid": kid}
             )
-
         k = self.key(kid)
         return jwt.encode(claims, k.pem, algorithm="RS256", headers={"kid": k.kid})
+
+    def access_token(
+        self,
+        *,
+        now: float,
+        kid: str = "kid-new",
+        azp: str = S2S_AZP,
+        sub: str = S2S_SA_SUB,
+        aud=(CLIENT_ID, "account"),
+        scope: str = f"{S2S_SCOPE} profile email",
+        typ: str = "Bearer",
+        iss: str | None = None,
+        expires_in: int = 300,
+        alg: str = "RS256",
+        omit: tuple[str, ...] = (),
+        extra: dict | None = None,
+    ) -> str:
+        """簽一個 **client_credentials** 流程的 access token(T14a:推送 API 的憑證)。
+
+        參數:
+          azp   — 呼叫方的 client_id(我方以它查來源登記表)
+          sub   — 呼叫方 service account 使用者的 sub
+          aud   — 預設 `["cats-inbox", "account"]`:契約 §11 的 optional client scope
+                  以 audience mapper 加上 `cats-inbox`;`account` 來自 service account
+                  使用者的預設角色 —— **真實的 `aud` 是清單,不是字串**
+          scope — 空白分隔字串(Keycloak 的形狀,不是陣列)
+          typ   — Keycloak access token 一律 `Bearer`(id_token 是 `ID`)
+          其餘同 `id_token`
+        回傳: 已簽名的 JWT 字串
+        副作用: 無
+
+        🔴 預設**給滿**真實 Keycloak client_credentials token 會給的 claims
+           (`jti`/`acr`/`allowed-origins`/`realm_access`/`resource_access`/
+           `clientHost`/`clientAddress`/`client_id`/`preferred_username`…),
+           理由與本檔檔頭相同:**測試替身比真實 IdP 寬鬆**時,它會把自己想保護的
+           缺陷一起抹平(契約 v3.2 的 `at_hash`)。
+           ⚠ 刻意**沒有** `sid`、`nonce`、`at_hash`:client_credentials 沒有使用者 session,
+             真實 token 上也沒有 —— 加上去才是替身比真實「寬鬆」。
+        """
+        claims = {
+            "exp": int(now) + expires_in,
+            "iat": int(now),
+            "jti": f"jti-{int(now)}-{azp}",
+            "iss": iss or ISSUER,
+            "aud": list(aud) if isinstance(aud, (list, tuple)) else aud,
+            "sub": sub,
+            "typ": typ,
+            "azp": azp,
+            "acr": "1",
+            "allowed-origins": ["/*"],
+            "realm_access": {
+                "roles": ["default-roles-sporton", "offline_access", "uma_authorization"]
+            },
+            "resource_access": {
+                "account": {"roles": ["manage-account", "manage-account-links", "view-profile"]}
+            },
+            "scope": scope,
+            "clientHost": "172.18.0.23",
+            "email_verified": False,
+            "preferred_username": f"service-account-{azp}",
+            "clientAddress": "172.18.0.23",
+            "client_id": azp,
+        }
+        for name in omit:
+            claims.pop(name, None)
+        if extra:
+            claims.update(extra)
+        return self._sign(claims, kid=kid, alg=alg)
+
+    def user_access_token(
+        self, *, now: float, sub: str = "11111111-2222-3333-4444-555555555555",
+        expires_in: int = 300,
+    ) -> str:
+        """簽一個**使用者登入流程**(authorization code)簽給 `cats-inbox` 的 access token。
+
+        回傳: 已簽名的 JWT 字串
+        副作用: 無
+
+        形狀照 Keycloak 實際給的:`azp` 是**我方自己**(`cats-inbox`)、`aud` 是 `account`
+        (使用者的預設角色帶進來的)、`scope` 是登入時要的 `openid` + 預設的 `profile`,
+        並帶使用者 session 的 `sid`。
+        🔴 T14a 用它證明「**使用者的 token 不是服務憑證**」:一個登入過的人
+           拿自己的 token 打推送端點,必須是 401 —— 否則任何人都能以系統身分發通知。
+        """
+        claims = {
+            "exp": int(now) + expires_in,
+            "iat": int(now),
+            "auth_time": int(now),
+            "jti": f"jti-user-{int(now)}",
+            "iss": ISSUER,
+            "aud": "account",
+            "sub": sub,
+            "typ": "Bearer",
+            "azp": CLIENT_ID,
+            "sid": "sid-abc-123",
+            "acr": "1",
+            "realm_access": {"roles": ["default-roles-sporton", "offline_access"]},
+            "scope": "openid profile",
+            "email_verified": True,
+            "name": "測試 使用者",
+            "preferred_username": "tester",
+        }
+        return self._sign(claims, kid="kid-new", alg="RS256")

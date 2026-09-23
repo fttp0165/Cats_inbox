@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""寫入端的輸入驗證,以及它會丟出的兩個客戶端錯誤。
+"""寫入端的輸入驗證,以及它會丟出的客戶端錯誤(400 / 404 / 422)。
 
 用途: 把「使用者送進來的值合不合法」集中成幾個小函式,讓每一種拒收
       都是**同一種形狀的 400**,而不是各端點各自發明一種回應。
@@ -45,6 +45,25 @@ class NotFound(OidcError):
 
     def __init__(self, detail: str) -> None:
         super().__init__(404, "not_found", detail)
+
+
+class IdempotencyKeyReused(OidcError):
+    """同一把 `Idempotency-Key`、**不同內容** → **422**(T14a)。
+
+    🔴 為什麼不是「回放第一次的結果」:回放的話呼叫方拿到 200,
+       而**第二則通知根本不存在** —— 呼叫方把 key 重用在另一個事件上
+       (用固定字串或時間戳當 key 是常見的整合 bug)時,那些通知會一則一則
+       默默消失。「通知沒送到」是本系統最糟的失效模式。
+    ⚠ 422 是 IETF `draft-ietf-httpapi-idempotency-key-header` 的建議碼。
+      本服務的 422 **只有這一個意思**(body 格式錯一律 400),
+      呼叫方看到 422 就知道是 key 的問題,不必猜。
+    """
+
+    def __init__(self) -> None:
+        super().__init__(
+            422, "idempotency_key_reused",
+            "這把 Idempotency-Key 在 24 小時內已用於內容不同的請求;每個事件請用不同的 key",
+        )
 
 
 def require_text(value: str | None, *, field: str, max_length: int) -> str:

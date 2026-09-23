@@ -259,3 +259,87 @@ class AnnouncementRead(Base):
     )
 
     announcement: Mapped[Announcement] = relationship(back_populates="reads")
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# T14a:推送 API 的兩張表(S2S 路徑專用)
+#
+# 🔴 **為什麼是兩張新表,而不是在 `message` 上加欄位:**
+#    上游 §2.1 的退路是「併回 compliance 的成本=**搬四張表**」。在 `message` 上
+#    長出 S2S 專用的欄位(呼叫方、去重 key、觸發者),搬表就變成一次資料遷移。
+#    這兩張表只屬於「獨立服務 + S2S 推送」這個形態;併回 compliance 時,
+#    推送會變成它的內部呼叫,兩張表直接不需要。
+# ═══════════════════════════════════════════════════════════════════════
+
+# 🔴 與 `Message.source_app` 的欄寬**必須一致**:標籤會被原樣複製過去。
+#    大於它的話,登記一個長標籤會成功,而**每一次推送都在 INSERT 時 500** ——
+#    PostgreSQL 對 VARCHAR(n) 超長是報錯、SQLite 是無視(本機綠、上線 500)。
+#    守門:`tests/test_schema.py::test_source_label_fits_the_column_it_is_copied_into`
+SOURCE_LABEL_MAX = 32
+# Keycloak 的 client_id 上限是 255;取同值,免得合法的 client 登記不進來
+AZP_MAX = 255
+IDEMPOTENCY_KEY_MAX = 128
+
+
+class SourceApp(Base):
+    """來源系統登記表:`azp`(呼叫方 client_id)→ 顯示標籤 + 啟用旗標。
+
+    我方 2026-08-24 答覆 portal Q2 的落點:「資料庫表 `source_app`,以 `azp` 為主鍵;
+    新增來源=管理後台加一列;可停用單一來源而不動程式」。
+
+    🔴 **未登記的 `azp` 一律 403**(deny-by-default,契約 §11.5 第 3 條),
+       不 fallback 成「未知來源」—— 通知以來源標籤當寄件人顯示,
+       一個能自稱來源的呼叫方就是釣魚載具。
+    ⚠ **停用而不刪除**(與 `UserRole.enabled` 同一個理由):有推送歷史的來源,
+      它的稽核收據指著它;刪除會讓「這則是誰推的」失去對象。
+    """
+
+    __tablename__ = "source_app"
+
+    azp: Mapped[str] = mapped_column(String(AZP_MAX), primary_key=True)
+    # 顯示標籤:以「寄件人」的位置顯示給**每一個收件人**(階段一零人名:
+    # 這裡放的是系統名,例「TRF 系統」,**不得是人名**)
+    label: Mapped[str] = mapped_column(String(SOURCE_LABEL_MAX), nullable=False)
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    # 誰登記的:管理員的 sub(稽核用途;**不存姓名**)
+    created_by: Mapped[str] = mapped_column(String(64), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=_utcnow
+    )
+
+
+class PushReceipt(Base):
+    """一次成功推送的收據:去重的依據,**同時是 `X-User-Id` 的持久稽核紀錄**。
+
+    🔴 **`(azp, idempotency_key)` 唯一** —— key 以**呼叫方**為範圍:
+       全域唯一的話,B 系統的推送會被「回放」成 A 系統的那一則(跨來源外洩)。
+       這個約束也是並行重送時**唯一**擋住重複訊息的東西(先查後寫之間有空窗)。
+
+    🔴 **窗口(24h)以 `created_at` 比對判定,不靠刪列** —— 本服務刻意沒有排程器
+       (A.1 極簡棧),而收據同時是稽核紀錄:每日刪收據就是每日刪稽核。
+       保留期跟著訊息走(`message_id` 外鍵 CASCADE,N3 定案時一併處理)。
+       ⚠ 這與 2026-08-24 答覆 Q3「每日 DELETE」的**內部**描述不同,對外語意不變,
+         理由見 dev-log `2026-09-23_T14a` 設計決定 1。
+    """
+
+    __tablename__ = "push_receipt"
+    __table_args__ = (
+        UniqueConstraint("azp", "idempotency_key", name="uq_push_receipt_azp_key"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    # ⚠ 外鍵**不** CASCADE:登記表只停用不刪除;有歷史的來源刪不掉是對的
+    azp: Mapped[str] = mapped_column(
+        String(AZP_MAX), ForeignKey("source_app.azp"), nullable=False
+    )
+    idempotency_key: Mapped[str] = mapped_column(String(IDEMPOTENCY_KEY_MAX), nullable=False)
+    # 請求內容的 SHA-256(十六進位)。同 key 不同內容 → 422,見 `repo.push_notification`
+    request_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    message_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("message.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    # `X-User-Id`:觸發這個事件的**人**(稽核鏈;portal 加嚴條件)。只存 sub。
+    actor_sub: Mapped[str] = mapped_column(String(64), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=_utcnow
+    )

@@ -292,3 +292,110 @@ def test_models_match_migration_schema(alembic_cfg, pg_engine, models_engine):
         )
         differing = {k: (a[k], b[k]) for k in a if a[k] != b[k]}
         assert not differing, f"`{table}` 的 nullable 不一致(migration, model):{differing}"
+
+
+# ═══════════════════════════════════════════════════════════════════
+# 7. T14a:migration `0003`(來源登記表 + 去重收據)
+# ═══════════════════════════════════════════════════════════════════
+T14A_TABLES = ("source_app", "push_receipt")
+
+
+def _insert_message_sql(conn) -> str:
+    """以 SQL 直接造一則訊息,回傳它的 id(字串)。"""
+    from sqlalchemy import text
+
+    return str(conn.execute(text(
+        "INSERT INTO message (id, recipient_sub, category, subject, body, created_at) "
+        "VALUES (gen_random_uuid(), 'someone', 'system', 's', 'b', now()) RETURNING id"
+    )).scalar_one())
+
+
+def test_migration_0003_up_down_up(alembic_cfg, pg_engine):
+    """`0003` 建兩張表;降到 `0002` 時兩張表消失,而 `0001`/`0002` 的五張**留著**。
+
+    🔴 後半是重點(與 `0002` 那支同一個理由):`0003` 的 downgrade 手誤 drop 了
+       `message`,在正式環境是**刪掉所有人的通知**;drop 了 `app_user` 是刪掉所有人的身分。
+    """
+    from alembic import command
+
+    command.upgrade(alembic_cfg, "head")
+    tables = set(_insp(pg_engine).get_table_names())
+    for t in T14A_TABLES:
+        assert t in tables, f"upgrade 後缺 {t},實得 {sorted(tables)}"
+
+    command.downgrade(alembic_cfg, "0002")
+    tables = set(_insp(pg_engine).get_table_names())
+    for t in T14A_TABLES:
+        assert t not in tables, f"🔴 downgrade 後 {t} 還在——backward 是假的"
+    for t in (*T07_TABLES, "app_user", "user_role"):
+        assert t in tables, (
+            f"🔴 降到 0002 卻把 {t} 也刪了。實得 {sorted(tables)}"
+        )
+
+    command.upgrade(alembic_cfg, "head")
+    assert set(T14A_TABLES) <= set(_insp(pg_engine).get_table_names())
+
+
+def test_push_receipt_key_is_unique_per_caller(alembic_cfg, pg_engine):
+    """`(azp, idempotency_key)` 唯一 —— 在**真的 PostgreSQL** 上 INSERT 看它擋。
+
+    🔴 這個約束是並行重送時**唯一**擋住重複訊息的東西(先查後寫之間有空窗)。
+       同一把 key 在**不同呼叫方**之間必須可以並存(key 以呼叫方為範圍)。
+    """
+    from alembic import command
+    from sqlalchemy import text
+    from sqlalchemy.exc import IntegrityError
+
+    command.upgrade(alembic_cfg, "head")
+    ins = text(
+        "INSERT INTO push_receipt (azp, idempotency_key, request_hash, message_id, actor_sub, created_at) "
+        "VALUES (:azp, 'evt-1', 'h', CAST(:mid AS uuid), '22222222-3333-4444-8555-666666666666', now())"
+    )
+    with pg_engine.begin() as conn:
+        for azp in ("a-sa", "b-sa"):
+            conn.execute(text(
+                "INSERT INTO source_app (azp, label, enabled, created_by, created_at) "
+                "VALUES (:azp, 'L', true, 'test', now())"
+            ), {"azp": azp})
+        m1, m2, m3 = (_insert_message_sql(conn) for _ in range(3))
+        conn.execute(ins, {"azp": "a-sa", "mid": m1})
+        conn.execute(ins, {"azp": "b-sa", "mid": m2})     # 不同呼叫方、同一把 key:合法
+    with pytest.raises(IntegrityError):
+        with pg_engine.begin() as conn:
+            conn.execute(ins, {"azp": "a-sa", "mid": m3})
+
+
+def test_push_receipt_foreign_keys(alembic_cfg, pg_engine):
+    """收據的兩個外鍵:`message_id` 隨訊息刪除(CASCADE)、`azp` 指向登記表。
+
+    ⚠ `message_id` 用 CASCADE:收據同時是稽核紀錄,**保留期跟著訊息走**
+      (N3 定案後刪舊訊息時,收據一起走,不會留下指向不存在訊息的孤兒)。
+    ⚠ `azp` **不** CASCADE:登記表只停用不刪除;有歷史的來源刪不掉是對的。
+    """
+    from alembic import command
+
+    command.upgrade(alembic_cfg, "head")
+    fks = {fk["referred_table"]: fk for fk in _insp(pg_engine).get_foreign_keys("push_receipt")}
+    assert "message" in fks, f"缺到 message 的外鍵:{fks}"
+    assert (fks["message"].get("options") or {}).get("ondelete", "").upper() == "CASCADE"
+    assert "source_app" in fks, f"缺到 source_app 的外鍵:{fks}"
+    assert (fks["source_app"].get("options") or {}).get("ondelete", "").upper() != "CASCADE", (
+        "🔴 刪除來源會連帶刪掉它的稽核收據"
+    )
+
+
+def test_source_label_fits_the_column_it_is_copied_into(alembic_cfg, pg_engine):
+    """`source_app.label` 的欄寬不得大於 `message.source_app`(它被原樣複製過去)。
+
+    🔴 大於的話,登記一個 40 字的標籤會成功,而**每一次推送都在 INSERT 時 500** ——
+       PostgreSQL 對 VARCHAR(n) 超長是報錯,SQLite 是無視(本機測試綠、上線 500)。
+    """
+    from alembic import command
+
+    command.upgrade(alembic_cfg, "head")
+    label = {c["name"]: c for c in _insp(pg_engine).get_columns("source_app")}["label"]
+    target = {c["name"]: c for c in _insp(pg_engine).get_columns("message")}["source_app"]
+    assert label["type"].length is not None and target["type"].length is not None
+    assert label["type"].length <= target["type"].length, (
+        f"🔴 label 欄寬 {label['type'].length} > message.source_app 欄寬 {target['type'].length}"
+    )

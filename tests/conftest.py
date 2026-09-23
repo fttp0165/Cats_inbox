@@ -302,8 +302,12 @@ def pg_engine():
     url = os.environ["INBOX_TEST_DB_URL"]
     engine = create_engine(url, future=True)
     with engine.begin() as conn:
-        # 依外鍵相依的反序 drop(T07 的三張表在前)
-        for tbl in ("announcement_read", "announcement", "message",
+        # 依外鍵相依的反序 drop(T14a 的兩張表在前:`push_receipt` 有外鍵到 `message`)
+        # 🔴 新增表時**必須**加進這裡:漏加的話 `alembic_version` 被清掉而那張表還在,
+        #    下一支測試的 `upgrade head` 會撞「relation already exists」——
+        #    症狀看起來像 migration 壞了,其實是清場不完整。
+        for tbl in ("push_receipt", "source_app",
+                    "announcement_read", "announcement", "message",
                     "user_role", "app_user", "alembic_version"):
             conn.execute(text(f"DROP TABLE IF EXISTS {tbl} CASCADE"))
     yield engine
@@ -348,7 +352,8 @@ def models_engine():
         )
     engine = create_engine(url, future=True)
     with engine.begin() as conn:
-        for tbl in ("announcement_read", "announcement", "message",
+        for tbl in ("push_receipt", "source_app",
+                    "announcement_read", "announcement", "message",
                     "user_role", "app_user", "alembic_version"):
             conn.execute(text(f"DROP TABLE IF EXISTS {tbl} CASCADE"))
     yield engine

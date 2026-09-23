@@ -81,6 +81,7 @@ def create_app(*, transport=None, clock=None) -> FastAPI:
         from app.routes_auth import build_auth_router
         from app.routes_business import build_business_router
         from app.routes_inbox import build_inbox_router
+        from app.routes_push import build_push_router
         from app.session import SessionStore
 
         # 🔴 建立 engine,但**不** create_all —— schema 的唯一權威是
@@ -100,6 +101,9 @@ def create_app(*, transport=None, clock=None) -> FastAPI:
         router.include_router(build_publish_page_router(settings=settings))
         router.include_router(build_business_router())
         router.include_router(build_admin_router(settings=settings))
+        # T14a:推送 API(S2S)。🔴 它**只認服務憑證**,不讀 session cookie;
+        #    沒有任何啟用中的來源時等於全拒(deny-by-default)。
+        router.include_router(build_push_router(settings=settings))
         # `app.state` 是 `app/deps.py` 取用 store/oidc/clock 的唯一途徑
         # ——相依函式拿不到 closure,只拿得到 request。
         app.state.oidc = oidc
@@ -174,7 +178,10 @@ def create_app(*, transport=None, clock=None) -> FastAPI:
            錯誤內容只給代碼,不給細節——細節只進 log,不告訴呼叫方
            「是哪一項不對」(那等於幫攻擊者縮小範圍)。
         """
-        return JSONResponse({"error": exc.code}, status_code=exc.status_code)
+        # T14a:S2S 端點的 401/403 帶 `WWW-Authenticate`(RFC 6750 §3)
+        return JSONResponse(
+            {"error": exc.code}, status_code=exc.status_code, headers=exc.headers
+        )
 
     return app
 

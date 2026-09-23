@@ -6,8 +6,9 @@
 副作用: 對 IdP 發 HTTP 請求(discovery / JWKS / token 端點)。不寫 DB、不寫檔。
 
 契約落點對照:
-  §3.2  只接受 RS256;JWKS 快取 1h、支援 kid 輪替  → `verify_id_token` / `_key_for`
-  §3.1  驗 `iss` / `aud`(= client_id)/ `exp`      → `verify_id_token`
+  §3.2  只接受 RS256;JWKS 快取 1h、支援 kid 輪替  → `_decode_rs256` / `_key_for`
+  §3.1  驗 `iss` / `aud`(= client_id)/ `exp`      → `_decode_rs256`(id_token 與 access token 共用)
+  §11.5 資源方驗 `aud`;access token 才算服務憑證   → `verify_access_token`(T14a;scope 與來源在 `app/s2s.py`)
   §3.3  時鐘容忍 ±30 秒(**驗證方**的義務)         → `LEEWAY_SECONDS`
   §3.3  伺服器端主動 refresh                        → `refresh()`(由 routes_auth 觸發)
   §2.4  伺服器走內部位址,`iss` 維持對外             → `_to_internal` / `_to_external`
@@ -52,11 +53,16 @@ class OidcError(Exception):
        本模組只產生 401/400,403 一律由授權層(T05)發出。
     """
 
-    def __init__(self, status_code: int, code: str, detail: str = "") -> None:
+    def __init__(
+        self, status_code: int, code: str, detail: str = "", *, headers: dict | None = None
+    ) -> None:
         super().__init__(f"{code}: {detail}")
         self.status_code = status_code
         self.code = code
         self.detail = detail
+        # T14a:S2S 端點的 401/403 要帶 `WWW-Authenticate`(RFC 6750 §3)——
+        # 呼叫方是程式,它靠這個標頭知道「換 token」還是「要 scope」。
+        self.headers = headers
 
 
 class Transport(Protocol):
@@ -385,20 +391,19 @@ class OidcClient:
         self._missing_kids.add(kid)
         raise OidcError(401, "invalid_token", "JWKS 找不到對應的 kid")
 
-    def verify_id_token(
-        self, token: str, *, nonce: str | None = None, access_token: str | None = None
-    ) -> dict:
-        """驗證 id_token 並回傳 claims。
+    def _decode_rs256(self, token: str, *, required: list[str]) -> dict:
+        """驗簽 + `iss` + `aud`(= 我方 client_id)+ 時間 —— id_token 與 access token 共用。
 
-        參數:
-          token        — id_token(JWT)
-          nonce        — 登入時發出的一次性值;傳入即比對(refresh 換來的
-                         id_token 依規範不帶 nonce,故該情境不傳)
-          access_token — 同一次 token response 的 access token;有傳才比 `at_hash`
+        參數: token — JWT;required — 必須存在的 claims
         回傳: claims dict
         錯誤: 任何驗證不過一律 OidcError(401)——不細分原因給呼叫方,
               細節只進 log(避免把「哪一項不對」告訴攻擊者)
         副作用: 可能觸發 JWKS 取用
+
+        🔴 **抽成一處(T14a)而不是讓 access token 另寫一份。** 這一段的每一行
+           都是一次事故換來的(alg 白名單要在驗簽**之前**、未預期例外不得漏成 500、
+           時間自己驗才有 ±30s),兩份各寫一次的話,其中一份遲早會少一行 ——
+           而少一行的那份照樣回 200。
         """
         try:
             header = jwt.get_unverified_header(token)
@@ -425,7 +430,7 @@ class OidcClient:
                     # 而 ±30s 容忍與「300 秒後續期」正是只在時間邊界出錯的兩條。
                     "verify_exp": False,
                     "verify_iat": False,
-                    "require": ["iss", "aud", "sub", "exp", "iat"],
+                    "require": required,
                 },
             )
         except jwt.InvalidAudienceError:
@@ -445,12 +450,56 @@ class OidcClient:
             raise OidcError(401, "invalid_token", f"驗證失敗:{type(exc).__name__}")
 
         self._verify_time(claims)
+        return claims
+
+    def verify_id_token(
+        self, token: str, *, nonce: str | None = None, access_token: str | None = None
+    ) -> dict:
+        """驗證 id_token 並回傳 claims。
+
+        參數:
+          token        — id_token(JWT)
+          nonce        — 登入時發出的一次性值;傳入即比對(refresh 換來的
+                         id_token 依規範不帶 nonce,故該情境不傳)
+          access_token — 同一次 token response 的 access token;有傳才比 `at_hash`
+        回傳: claims dict
+        錯誤: 任何驗證不過一律 OidcError(401)
+        副作用: 可能觸發 JWKS 取用
+        """
+        claims = self._decode_rs256(token, required=["iss", "aud", "sub", "exp", "iat"])
 
         if nonce is not None and claims.get("nonce") != nonce:
             # nonce 對不上 = 這個 id_token 不是本次登入換來的(重放)
             raise OidcError(401, "invalid_token", "nonce 不符")
 
         self._verify_at_hash(claims, access_token)
+        return claims
+
+    def verify_access_token(self, token: str) -> dict:
+        """驗證**服務對服務**(client_credentials)的 access token(T14a)。
+
+        參數: token — `Authorization: Bearer` 帶來的 JWT
+        回傳: claims dict(呼叫方再依它判 scope 與來源,見 `app/s2s.py`)
+        錯誤: 任何驗證不過一律 OidcError(401)
+        副作用: 可能觸發 JWKS 取用
+
+        契約 §11.5 資源方義務的第一條:**`aud` 必須含我方 client_id**。
+        (第二條「逐端點驗 scope」與第三條「deny-by-default、內網不是身分」
+         是授權,不是認證 —— 在 `app/s2s.py`,錯了是 403 不是 401。)
+
+        🔴 **`typ` 必須是 `Bearer`** —— 這一行擋的是簽章、`iss`、`aud` 全對而**不是 access token**
+           的東西。最危險的一種是**使用者的 id_token**:Keycloak 簽給我方的 id_token,
+           `aud` 正好就是 `cats-inbox`;只驗到 `aud` 的實作會讓任何登入過的人拿自己的
+           id_token 以系統身分發通知(id_token 的 `typ` 是 `ID`)。
+        ⚠ 它與 `app/s2s.py` 的「`azp` 是我方 → 401」是**兩道各自獨立**的關:id_token
+          兩道都擋得住(它的 `azp` 就是我方),而 `typ=Refresh` 或別的 client 的 id_token
+          只有這一道擋得住 —— 所以兩道都要有、而且各自有**只有它擋得住**的測試案例
+          (T14a 突變檢查 M01 / M02)。
+        ⚠ 比對不分大小寫:只放寬大小寫,不放寬值。
+        """
+        claims = self._decode_rs256(token, required=["iss", "aud", "sub", "exp", "iat", "azp"])
+        if str(claims.get("typ", "")).lower() != "bearer":
+            raise OidcError(401, "invalid_token", f"typ={claims.get('typ')!r} 不是 access token")
         return claims
 
     def _verify_time(self, claims: dict) -> None:

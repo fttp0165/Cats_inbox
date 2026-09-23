@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>cats-inbox 推送 API 來源接入指南</title>
+<style>
+:root { color-scheme: light; }
+body { background:#ffffff; color:#1f2328; margin:0 auto; padding:2rem 1.2rem 4rem;
+       max-width:60rem; line-height:1.65;
+       font-family:-apple-system,"Segoe UI","Noto Sans TC","Microsoft JhengHei",
+                   "PingFang TC",sans-serif; }
+h1 { font-size:1.7rem; border-bottom:2px solid #d0d7de; padding-bottom:.4rem; }
+h2 { font-size:1.35rem; border-bottom:1px solid #d8dee4; padding-bottom:.3rem; margin-top:2.2rem; }
+h3 { font-size:1.12rem; margin-top:1.8rem; }
+h4 { font-size:1rem; margin-top:1.4rem; }
+p, li { overflow-wrap:break-word; }
+a { color:#0b57d0; }
+code { background:#f6f8fa; border:1px solid #e4e8ec; border-radius:4px;
+       padding:.08em .35em; font-size:.92em;
+       font-family:ui-monospace,SFMono-Regular,Consolas,"Noto Sans Mono CJK TC",monospace; }
+pre { background:#f6f8fa; border:1px solid #e4e8ec; border-radius:6px;
+      padding: .8rem 1rem; overflow-x:auto; line-height:1.5; }
+pre code { background:none; border:none; padding:0; }
+blockquote { margin:1rem 0; padding:.5rem 1rem; border-left:4px solid #c9d1d9;
+             background:#f8f9fb; color:#4b535d; }
+blockquote p { margin:.35rem 0; }
+.tablewrap { overflow-x:auto; margin:1rem 0; }
+table { border-collapse:collapse; font-size:.95em; min-width:50%; }
+th, td { border:1px solid #d0d7de; padding:.4rem .65rem; text-align:left; vertical-align:top; }
+th { background:#f6f8fa; }
+tr:nth-child(even) td { background:#fbfcfd; }
+hr { border:none; border-top:1px solid #d0d7de; margin:2rem 0; }
+figure.svg { margin:1.2rem 0; text-align:center; }
+figure.svg svg { max-width:100%; height:auto; }
+</style>
+</head>
+<body>
+<h1>cats-inbox 推送 API 來源接入指南</h1>
+<p><strong>建立日期:</strong> 2026-09-23 17:30<br><strong>最後更新:</strong> 2026-09-23 17:30<br><strong>版本:</strong> v1.0</p>
+<blockquote><p><strong>給誰看:</strong> 要把系統通知推進站內信的<strong>來源系統</strong>團隊(第一個是 DI-4 立案的那一個)。<br><strong>一句話:</strong> 用你們自己的 S2S client 以 client_credentials 換一張帶 <code>notification:push</code> 的 token,<br><code>POST /inbox/api/v1/notifications</code>,每個事件帶一把 <code>Idempotency-Key</code> 與觸發者的 <code>X-User-Id</code>。<br><strong>規格權威:</strong> portal 2026-08-18 核定(《帳號系統接入契約》§11.7 第一案)+ 本服務 OpenAPI(<code>/inbox/openapi.json</code>)。<br>本指南與契約衝突時<strong>以契約為準</strong>;與 OpenAPI 衝突時以 OpenAPI 為準,並請回報(那是本文件的錯)。<br>交付副本時檔名加前綴:<code>cats-inbox_來源接入指南_v1.0.md</code>(憲法 A.4)。</p></blockquote>
+<hr>
+<h2>0. 先看這三條(它們都不會有錯誤訊息)</h2>
+<div class="tablewrap"><table><thead><tr><th>#</th><th>規則</th><th>違反時會怎樣</th></tr></thead><tbody><tr><td>1</td><td><code>recipient_sub</code> 填 <strong>Keycloak 的 <code>sub</code>(UUID)</strong>,不是 email、不是帳號名</td><td>本服務回 <strong>400</strong>。若回的是 201,那則通知就只有 <code>sub</code> 相符的那個人看得到 —— 收件匣以 <code>sub</code> 比對</td></tr><tr><td>2</td><td><strong>每個事件一把</strong> <code>Idempotency-Key</code>,<strong>重送時沿用同一把</strong></td><td>每次重送都換新 key → 收件人看到重複的通知;不同事件共用一把 key → <strong>422</strong>(若我們回放而不報錯,第二則會默默消失 —— 所以我們報錯)</td></tr><tr><td>3</td><td>只推<strong>純文字</strong>;連結只能是<strong>同站</strong></td><td>HTML 會被原樣跳脫顯示(看到 <code>&lt;b&gt;</code> 字面);外部連結 <strong>400</strong> 拒收 —— 站內通知是現成的釣魚載具</td></tr></tbody></table></div>
+<hr>
+<h2>1. 開通流程(誰做什麼)</h2>
+<div class="tablewrap"><table><thead><tr><th>步</th><th>誰</th><th>做什麼</th><th>產出</th></tr></thead><tbody><tr><td>①</td><td>來源系統 + Benny</td><td>DI-4 立案:決定哪些事件要推、推給誰</td><td>事件清單</td></tr><tr><td>②</td><td><strong>portal</strong></td><td>依契約 §11 建 S2S client <code>&lt;client_id&gt;-sa</code>(client_credentials);掛 <strong>optional</strong> client scope <code>notification:push</code>(內含 audience mapper → <code>cats-inbox</code>)</td><td>client_id + secret(🔴 <strong>走安全管道</strong>,不進聊天、git、issue、CI log)</td></tr><tr><td>③</td><td><strong>cats-inbox 管理員</strong></td><td><code>/inbox/admin/sources</code> 登記 <code>azp</code> = 上面的 client_id,標籤填<strong>系統名</strong>(例「TRF 系統」,≤ 32 字,<strong>不得是人名</strong>)</td><td>來源登記</td></tr><tr><td>④</td><td>來源系統</td><td>依本指南 §2–§5 實作</td><td>—</td></tr><tr><td>⑤</td><td>雙方</td><td>跑 §7 冒煙,結果寫進 cats-inbox 任務 <strong>T14b</strong> 的 dev-log</td><td>冒煙紀錄</td></tr></tbody></table></div>
+<p>⚠ 順序:③ 沒做之前,就算 ② 的 token 完全正確也是 <strong>403 <code>source_not_registered</code></strong> —— 那是預期中的,不是 bug。</p>
+<hr>
+<h2>2. 取 token(client_credentials)</h2>
+<div class="tablewrap"><table><thead><tr><th>項目</th><th>值</th></tr></thead><tbody><tr><td>token 端點(同一台 VM、在 <code>cats-edge</code> 上的容器)</td><td><code>http://keycloak:8080/auth/realms/sporton/protocol/openid-connect/token</code></td></tr><tr><td>token 端點(其他位置)</td><td><code>https://catsapp.sporton.com.tw/auth/realms/sporton/protocol/openid-connect/token</code></td></tr><tr><td><code>grant_type</code></td><td><code>client_credentials</code></td></tr><tr><td><code>scope</code></td><td><strong><code>notification:push</code></strong>(🔴 必須明確要求 —— 它是 optional scope,不要求就不會出現在 token 裡)</td></tr><tr><td>client 認證</td><td><code>client_id</code> + <code>client_secret</code>(form body 或 HTTP Basic)</td></tr></tbody></table></div>
+<p>🔴 <strong>token 要快取</strong>,不要每推一次就換一張:access token 效期內重用,<strong>到期前 60 秒</strong>再換。<br>每次都換會把 IdP 變成你們推送路徑上的熱路徑相依(契約 §11.6 反對),IdP 慢一次,你們的每一則通知都跟著慢。</p>
+<p>⚠ 容器內走內部位址換來的 token,<code>iss</code> 仍是<strong>對外</strong>網址 —— 這是對的(契約 §2.4),本服務驗的就是對外那個值。</p>
+<hr>
+<h2>3. 呼叫推送 API</h2>
+<div class="tablewrap"><table><thead><tr><th>項目</th><th>值</th></tr></thead><tbody><tr><td>方法與路徑</td><td><code>POST /inbox/api/v1/notifications</code></td></tr><tr><td>位址(同一台 VM、在 <code>cats-edge</code> 上的容器)</td><td><code>http://cats-inbox-api:8080/inbox/api/v1/notifications</code></td></tr><tr><td>位址(經統一入口)</td><td><code>https://catsapp.sporton.com.tw/inbox/api/v1/notifications</code> —— ⚠ <strong>cats-inbox T11b(gateway 路由啟用)完成後才通</strong></td></tr><tr><td>契約文件</td><td><code>/inbox/openapi.json</code>(body schema、兩個標頭、六種回應都在裡面)</td></tr></tbody></table></div>
+<p>⚠ 走內部位址<strong>不代表可以不帶 token</strong> —— 本服務<strong>完全不看來源位址</strong>(契約 §11.5:「內網不是身分」)。</p>
+<h3>3.1 標頭(三個都必帶)</h3>
+<div class="tablewrap"><table><thead><tr><th>標頭</th><th>內容</th><th>規則</th></tr></thead><tbody><tr><td><code>Authorization</code></td><td><code>Bearer &lt;access token&gt;</code></td><td>§2 換來的那張</td></tr><tr><td><code>X-User-Id</code></td><td><strong>觸發這個事件的人</strong>的 <code>sub</code>(UUID)</td><td>🔴 portal 加嚴條件:<strong>必帶、必驗</strong>。不得是你們 service account 自己;不得省略當成「系統發出」—— 稽核鏈靠它</td></tr><tr><td><code>Idempotency-Key</code></td><td>這個<strong>事件</strong>的唯一識別</td><td>1–128 個可見 ASCII 字元(不含空白);<strong>逐字比對</strong>(含引號、大小寫)</td></tr><tr><td><code>Content-Type</code></td><td><code>application/json</code></td><td>body 必須是 UTF-8 的 JSON 物件,≤ 256 KiB</td></tr></tbody></table></div>
+<p><strong><code>Idempotency-Key</code> 怎麼產生:</strong> 用<strong>事件本身</strong>的識別組出來,例 <code>trf:returned:TRF-2026-00123:v3</code>。<br>🔴 不要用時間戳或亂數(重送時會變 → 重複通知);不要用固定字串(不同事件撞 key → 422)。<br>同一把 key 在 <strong>24 小時內</strong>重送 = 回放第一次的結果;<strong>滿 24 小時</strong>之後同一把 key 會被當成<strong>新的一則</strong>。</p>
+<p>⚠ <strong>待 portal 確認的一點</strong>:沒有人觸發的事件(排程、批次)要填誰當 <code>X-User-Id</code>,核定規格沒有明講。<br>本服務的提議:填<strong>該排程的負責人</strong>的 <code>sub</code>,並在你們的 log 記下「排程觸發」—— 仍<strong>不得</strong>填 service account 自己。T14b 動工前定案。</p>
+<h3>3.2 body</h3>
+<pre><code>{
+  "recipient_sub": "0b5a7c2e-1f3d-4e8a-9b6c-2d4e6f8a0b1c",
+  "subject": "TRF-2026-00123 已退回",
+  "body": "審核意見:附件缺第 3 頁。請補件後重送。",
+  "action_url": "/compliance/trf/2026-00123"
+}</code></pre>
+<div class="tablewrap"><table><thead><tr><th>欄位</th><th>必填</th><th>規則</th></tr></thead><tbody><tr><td><code>recipient_sub</code></td><td>✅</td><td>收件人的 Keycloak <code>sub</code>(UUID;大小寫不拘,存成小寫)。<strong>不必</strong>先登入過站內信</td></tr><tr><td><code>subject</code></td><td>✅</td><td>純文字,1–255 字</td></tr><tr><td><code>body</code></td><td>✅</td><td>純文字,1–20000 字。換行會保留;<strong>HTML 不會被解讀</strong>(跳脫顯示)</td></tr><tr><td><code>action_url</code></td><td>—</td><td>「前往處理」按鈕的連結。<strong>只接受同站</strong>:<code>/</code> 開頭的相對路徑,或 <code>https://catsapp.sporton.com.tw/</code> 開頭。<code>//x</code>、<code>/\x</code>、<code>javascript:</code>、外部網址一律 400</td></tr></tbody></table></div>
+<p>🔴 <strong>不要</strong>送 <code>source_app</code>、<code>category</code>、<code>sender_sub</code> —— 送了也會被忽略。<br>收件匣上顯示的來源標籤一律是 §1 ③ 登記的那個,由你們的 client 身分推導,<strong>不採信 body</strong>(能自稱來源 = 能冒充任何系統)。</p>
+<p>一次呼叫只推給<strong>一個</strong>人。要推給多人,就逐人呼叫,<strong>每人一把 key</strong>(例 <code>…:v3:&lt;收件人 sub&gt;</code>)。</p>
+<hr>
+<h2>4. 回應與錯誤碼</h2>
+<p>成功:</p>
+<div class="tablewrap"><table><thead><tr><th>狀態</th><th>意思</th><th>body</th></tr></thead><tbody><tr><td><strong>201</strong></td><td>建立了一則新通知</td><td><code>{"id": "&lt;訊息 id&gt;"}</code></td></tr><tr><td><strong>200</strong></td><td>24 小時內同一把 key、同內容的重送:<strong>回放</strong>第一次的結果,沒有新增</td><td><code>{"id": "&lt;第一次的 id&gt;"}</code>,並帶標頭 <code>Idempotent-Replayed: true</code></td></tr></tbody></table></div>
+<p>失敗(body 一律是 <code>{"error": "&lt;代碼&gt;"}</code>,細節只在本服務的 log 裡):</p>
+<div class="tablewrap"><table><thead><tr><th>狀態</th><th><code>error</code></th><th>意思</th><th>你們該做什麼</th><th>可重試?</th></tr></thead><tbody><tr><td>401</td><td><code>missing_token</code></td><td>沒帶 <code>Authorization: Bearer</code></td><td>帶上 token</td><td>修正後</td></tr><tr><td>401</td><td><code>invalid_token</code></td><td>token 驗不過:過期、<code>aud</code> 不含 <code>cats-inbox</code>、不是 access token、簽章/<code>iss</code> 不對</td><td><strong>換一張新 token 重試一次</strong>;還是 401 就檢查 §2 的 scope 與 client</td><td>換 token 後一次</td></tr><tr><td>403</td><td><code>insufficient_scope</code></td><td>token 有效但沒有 <code>notification:push</code></td><td>換 token 時要求 <code>scope=notification:push</code>;還是沒有 → 找 portal 掛 optional scope</td><td>❌</td></tr><tr><td>403</td><td><code>source_not_registered</code></td><td>你們的 client_id 沒登記</td><td>找 cats-inbox 管理員做 §1 ③</td><td>❌</td></tr><tr><td>403</td><td><code>source_disabled</code></td><td>你們的來源被停用了</td><td>找 cats-inbox 管理員(通常是因為推送異常而被暫停)</td><td>❌</td></tr><tr><td>400</td><td><code>missing_x_user_id</code> / <code>invalid_x_user_id</code> / <code>x_user_id_is_caller</code></td><td><code>X-User-Id</code> 缺、不是 UUID、或是你們自己的 service account</td><td>見 §3.1</td><td>修正後</td></tr><tr><td>400</td><td><code>missing_idempotency_key</code> / <code>invalid_idempotency_key</code></td><td>key 缺或含空白/非 ASCII/超過 128 字</td><td>見 §3.1</td><td>修正後</td></tr><tr><td>400</td><td><code>invalid_json</code> / <code>invalid_payload</code> / <code>payload_too_large</code></td><td>body 不是 JSON 物件、欄位型別不對、超過 256 KiB</td><td>見 §3.2</td><td>修正後</td></tr><tr><td>400</td><td><code>invalid_recipient_sub</code></td><td>收件人不是 UUID(常見:填了 email 或帳號名)</td><td>改填 <code>sub</code></td><td>修正後</td></tr><tr><td>400</td><td><code>empty_field</code> / <code>field_too_long</code></td><td>主旨或內容空白/超長</td><td>見 §3.2</td><td>修正後</td></tr><tr><td>400</td><td><code>action_url_*</code></td><td>連結不是同站</td><td>見 §3.2</td><td>修正後</td></tr><tr><td><strong>422</strong></td><td><code>idempotency_key_reused</code></td><td>這把 key 24 小時內已用於<strong>內容不同</strong>的請求</td><td>🔴 <strong>這是你們的 bug</strong>:不同事件共用了 key。修 key 的產生方式,<strong>不要</strong>換一把新 key 硬推過去</td><td>❌</td></tr><tr><td>5xx / 逾時</td><td>—</td><td>本服務或網路異常</td><td><strong>同一把 key</strong> 重試</td><td>✅</td></tr></tbody></table></div>
+<hr>
+<h2>5. 重試規則</h2>
+<ol><li><strong>只對 5xx 與網路錯誤重試</strong>,最多 <strong>2 次</strong>,指數退避(例:1 秒、4 秒)—— 契約 §11.6。</li><li>重試<strong>一律沿用同一把 <code>Idempotency-Key</code></strong>:第一次其實成功、只是回應沒送到的話,重試會拿到 <strong>200 回放</strong>而不是第二則通知。</li><li><strong>4xx 不重試</strong>(<code>401 invalid_token</code> 例外:換一張新 token 重試一次)。4xx 的意思是「這個請求本身有問題」,原樣重送只會再錯一次。</li><li>超過 24 小時才補送的同一事件,會被當成<strong>新的一則</strong>(寧可重複一次,也不要靜默丟掉)。</li></ol>
+<hr>
+<h2>6. 本服務這一側保證的事</h2>
+<div class="tablewrap"><table><thead><tr><th>保證</th><th>怎麼做到的</th></tr></thead><tbody><tr><td>同一則不會因為重送而出現兩次</td><td><code>(你們的 client_id, key)</code> 唯一約束;並行的同 key 請求也只會留下一則</td></tr><tr><td>你們的 key 不會跟別的系統撞</td><td>key 以<strong>呼叫方</strong>為範圍</td></tr><tr><td>通知內容<strong>不進 log</strong></td><td>本服務只記 client_id、觸發者、收件人的 <code>sub</code> 與訊息 id</td></tr><tr><td>沒登入過站內信的人也收得到</td><td>收件人不需要先存在;他第一次登入就會看到</td></tr><tr><td>停用一個來源是<strong>即時</strong>的</td><td>每一次請求都查登記表,不快取</td></tr></tbody></table></div>
+<hr>
+<h2>7. 冒煙清單(T14b 用)</h2>
+<p>在<strong>你們的容器裡</strong>跑(它在 <code>cats-edge</code> 上,與正式呼叫的網路路徑相同)。<br>🔴 secret 從容器既有的環境變數讀,<strong>不要</strong>貼進指令、不要印出來 —— 本專案 2026-08-28 發生過一次 secret 印在畫面上而必須輪替的事故。</p>
+<blockquote><p>🖥️ <strong>在哪執行:</strong> Cats VM(ssh 進去)· 工作目錄 任意<br>🏷️ <strong>動到誰的東西:</strong> 來源系統(在它的容器裡執行;把 <code>&lt;來源容器&gt;</code> 與兩個環境變數名換成你們的)</p></blockquote>
+<pre><code>docker exec -i &lt;來源容器&gt; python - &lt;&lt;'PY'
+import json, os, urllib.error, urllib.parse, urllib.request
+
+TOKEN_URL = "http://keycloak:8080/auth/realms/sporton/protocol/openid-connect/token"
+PUSH_URL = "http://cats-inbox-api:8080/inbox/api/v1/notifications"
+form = urllib.parse.urlencode({
+    "grant_type": "client_credentials",
+    "client_id": os.environ["NOTIFY_CLIENT_ID"],          # ← 換成你們的變數名
+    "client_secret": os.environ["NOTIFY_CLIENT_SECRET"],  # ← 同上;🔴 不要印出來
+    "scope": "notification:push",
+}).encode()
+token = json.load(urllib.request.urlopen(urllib.request.Request(TOKEN_URL, data=form)))["access_token"]
+
+def push(key, subject):
+    req = urllib.request.Request(PUSH_URL, method="POST", data=json.dumps({
+        "recipient_sub": os.environ["SMOKE_RECIPIENT_SUB"],   # ← 冒煙收件人的 sub
+        "subject": subject, "body": "cats-inbox 冒煙測試,可忽略。",
+    }).encode(), headers={
+        "Authorization": f"Bearer {token}", "Content-Type": "application/json",
+        "X-User-Id": os.environ["SMOKE_ACTOR_SUB"],           # ← 觸發者的 sub(不是 service account)
+        "Idempotency-Key": key,
+    })
+    try:
+        with urllib.request.urlopen(req) as r:
+            return r.status, json.load(r), r.headers.get("Idempotent-Replayed")
+    except urllib.error.HTTPError as e:
+        return e.code, json.load(e), None
+
+print("① 首次        ", push("smoke:1", "冒煙 A"))   # 預期 201
+print("② 同 key 重送  ", push("smoke:1", "冒煙 A"))   # 預期 200 + 'true',id 與 ① 相同
+print("③ 同 key 改內容", push("smoke:1", "冒煙 B"))   # 預期 422 idempotency_key_reused
+PY</code></pre>
+<p><strong>怎麼知道成功了:</strong></p>
+<div class="tablewrap"><table><thead><tr><th>步</th><th>預期</th><th>不是預期時</th></tr></thead><tbody><tr><td>①</td><td><code>(201, {'id': '…'}, None)</code></td><td>403 <code>source_not_registered</code> → §1 ③ 還沒做;403 <code>insufficient_scope</code> → token 沒要 scope 或 portal 沒掛;401 → 見 §4</td></tr><tr><td>②</td><td><code>(200, {'id': &lt;與 ① 相同&gt;}, 'true')</code></td><td>201 且 id 不同 → <strong>去重沒生效</strong>,停下來回報 cats-inbox</td></tr><tr><td>③</td><td><code>(422, {'error': 'idempotency_key_reused'}, None)</code></td><td>200 → <strong>不同內容被當成重送</strong>,停下來回報</td></tr><tr><td>④</td><td>收件人登入 <code>/inbox/</code>,看得到「冒煙 A」,來源標籤是 §1 ③ 登記的名字</td><td>看不到 → 核對 <code>SMOKE_RECIPIENT_SUB</code> 是不是他的 <code>sub</code>(不是 email)</td></tr></tbody></table></div>
+<p>⚠ 冒煙產生的「冒煙 A」會留在收件人的收件匣裡(本服務沒有刪除 API)—— 收件人請選自己人。</p>
+<hr>
+<h2>8. 常見錯誤對照(位置 / 原因 / 修法)</h2>
+<div class="tablewrap"><table><thead><tr><th>位置</th><th>症狀</th><th>原因</th><th>修法</th></tr></thead><tbody><tr><td>推送回應</td><td>403 <code>insufficient_scope</code>,而 token 換得到</td><td>換 token 時沒帶 <code>scope=notification:push</code>(它是 <strong>optional</strong> scope)</td><td>換 token 的 form 加 <code>scope=notification:push</code></td></tr><tr><td>推送回應</td><td>401 <code>invalid_token</code>,token 剛換的</td><td><code>aud</code> 不含 <code>cats-inbox</code>(portal 的 audience mapper 沒掛在那個 scope 上),或拿成了 id_token</td><td>把 token 貼到 jwt 解碼工具看 <code>aud</code> 與 <code>typ</code>(應為 <code>Bearer</code>)—— 🔴 用離線工具,不要貼到網站</td></tr><tr><td>收件匣</td><td>推送回 201,收件人說沒看到</td><td><code>recipient_sub</code> 填成別人的 <code>sub</code></td><td>用收件人本人的 <code>sub</code>;本服務已擋掉「不是 UUID」的情況,擋不住「是 UUID 但不是他」</td></tr><tr><td>收件匣</td><td>同一件事出現兩次</td><td>重試時換了 key,或超過 24 小時才補送</td><td>重試沿用同一把 key(§5)</td></tr><tr><td>推送回應</td><td>大量 422</td><td>key 由時間戳/固定字串產生,不同事件撞在一起</td><td>key 改由事件識別組成(§3.1)</td></tr></tbody></table></div>
+<hr>
+<h2>版本歷史</h2>
+<div class="tablewrap"><table><thead><tr><th>版本</th><th>日期</th><th>修改人</th><th>摘要</th></tr></thead><tbody><tr><td>v1.0</td><td>2026-09-23</td><td>Benny</td><td>初版(T14a)。依 portal 2026-08-18 核定規格與本服務實作(<code>app/routes_push.py</code>)寫成給來源系統照做的指南:開通五步(誰做什麼)、取 token(🔴 必須明確要求 optional scope、token 要快取)、三個必帶標頭、body 欄位規則、六種成功/失敗回應與<strong>逐碼的處置與可否重試</strong>、重試規則、本服務保證的事、可貼的冒煙清單(secret 自容器環境變數讀、不印出)、常見錯誤對照。🔴 <strong>誠實標註一個核定規格沒有明講的點</strong>:沒有人觸發的事件(排程/批次)<code>X-User-Id</code> 要填誰 —— 列為 T14b 動工前與 portal 定案</td></tr></tbody></table></div>
+</body>
+</html>
