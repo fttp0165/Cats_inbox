@@ -15,10 +15,10 @@
 | 1 | 服務憑證(簽章 / `iss` / `aud` / 時間 / `typ`)| 401 | `app/s2s.py` → `OidcClient.verify_access_token` |
 | 2 | scope `notification:push`(整詞)| 403 | `app/s2s.py` |
 | 3 | `azp` 已登記且啟用 | 403 | `app/s2s.py` |
-| 4 | body 是 JSON 物件 | 400 | 本檔 `_authenticated_json` —— 🔴 **認證之後才讀 body** |
-| 5 | `X-User-Id`(UUID、不是呼叫方自己)| 400 | 本檔 |
-| 6 | `Idempotency-Key`(1–128 個可見 ASCII)| 400 | 本檔 |
-| 7 | `recipient_sub` 是 UUID;主旨/內容/`action_url` | 400 | 本檔 + `repo.create_message()` |
+| 4 | body 是合法 JSON、≤ 256 KiB | 400 | 本檔 `_authenticated_json` —— 🔴 **認證之後才讀 body** |
+| 5 | `X-User-Id`(UUID、不是呼叫方自己)| 400 | 本檔 `push` |
+| 6 | `Idempotency-Key`(1–128 個可見 ASCII)| 400 | 本檔 `push` |
+| 7 | body 是 JSON **物件**、欄位型別對;`recipient_sub` 是 UUID;主旨/內容/`action_url` | 400 | 本檔 `push` + `repo.create_message()` |
 | 8 | 同 key:回放(200)/ 不同內容(422)/ 新建(201)| — | `repo.push_notification()` |
 
 🔴 **所有輸入錯誤一律 400**(不是 FastAPI 預設的 422)—— 對齊 `docs/開發計畫書.md` §3.4 的
