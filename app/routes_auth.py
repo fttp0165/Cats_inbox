@@ -286,7 +286,8 @@ def build_auth_router(*, settings, oidc: OidcClient, store: SessionStore, clock)
         return templates.TemplateResponse(
             request=request,
             name="logged_out.html",
-            context={"login_url": f"{settings.base_path}/oidc/login"},
+            # T08b:模板要用 base_path 組本地 Bootstrap 的路徑(不寫死 /inbox/)
+            context={"login_url": f"{settings.base_path}/oidc/login", "base_path": settings.base_path},
             headers={"Cache-Control": "no-store"},
         )
 

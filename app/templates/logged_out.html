@@ -1,43 +1,32 @@
-{# 已登出頁(T06)。
-   🔴 刻意**零外部資源**:契約 §4.10 同源義務禁外部 CDN,而這一頁是使用者
-      按下登出後唯一會看到的東西——它如果連不出字型就整頁白,體感是
-      「登出把系統弄壞了」。
+{# 已登出頁(T06;T08b 改用本地 Bootstrap 5)。
+   🔴 零外部資源:契約 §4.10 同源義務禁外部 CDN,而這一頁是使用者按下登出後唯一會看到的東西
+      ——它如果連不出樣式就整頁白,體感是「登出把系統弄壞了」。
+      樣式只來自同源的 `{{ base_path }}/assets/vendor/bootstrap.min.css`,路徑用 base_path 組。
    🔴 light 主題寫死,不做 prefers-color-scheme 深色切換(憲法第四條 1/2)。
    🔴 嚴格 CSP(T10 已落地):<style> 帶逐請求 nonce;style="…" 屬性一律不可用
-      (nonce 對屬性無效,屬性會被擋掉而症狀是版面走鐘且伺服器零錯誤)。
-      現在不先加是因為那個變數還不存在,加了會算繪出字面上的 nonce="" #}
+      (nonce 對屬性無效,屬性會被擋掉而症狀是版面走鐘且伺服器零錯誤)。 #}
 <!doctype html>
 <html lang="zh-Hant">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>已登出 — 站內信</title>
+  <link rel="stylesheet" href="{{ base_path }}/assets/vendor/bootstrap.min.css">
   <style nonce="{{ request.state.csp_nonce }}">
     :root { color-scheme: light; }
-    body {
-      margin: 0; min-height: 100vh;
-      display: flex; align-items: center; justify-content: center;
-      background: #f6f7f9; color: #1f2328;
-      font-family: system-ui, -apple-system, "Segoe UI", "Noto Sans TC", sans-serif;
-    }
-    .card {
-      background: #fff; border: 1px solid #d8dee4; border-radius: 8px;
-      padding: 2rem 2.5rem; max-width: 26rem; text-align: center;
-    }
-    h1 { font-size: 1.25rem; margin: 0 0 .75rem; }
-    p { margin: 0 0 1.25rem; color: #57606a; line-height: 1.6; }
-    a.btn {
-      display: inline-block; padding: .5rem 1.25rem;
-      background: #1f6feb; color: #fff; text-decoration: none; border-radius: 6px;
-    }
-    a.btn:hover { background: #1a5fd0; }
+    body { background: #f6f7f9; }
+    .card-narrow { max-width: 26rem; }
   </style>
 </head>
-<body>
-  <main class="card">
-    <h1>你已登出</h1>
-    <p>站內信的登入狀態已清除。若要繼續使用,請重新登入。</p>
-    <a class="btn" href="{{ login_url }}">重新登入</a>
+<body class="text-body">
+  <main class="container min-vh-100 d-flex align-items-center justify-content-center py-4">
+    <div class="card card-narrow w-100 shadow-sm text-center">
+      <div class="card-body p-4">
+        <h1 class="h5 mb-3">你已登出</h1>
+        <p class="text-secondary">站內信的登入狀態已清除。若要繼續使用,請重新登入。</p>
+        <a class="btn btn-primary" href="{{ login_url }}">重新登入</a>
+      </div>
+    </div>
   </main>
 </body>
 </html>

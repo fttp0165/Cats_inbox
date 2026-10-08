@@ -27,7 +27,8 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>收件匣 — 站內信</title>
-  <link rel="stylesheet" href="/inbox/assets/vendor/bootstrap.min.css">
+  {# T08b:路徑用 base_path 組,不寫死 /inbox/ —— 寫死的話 base_path 一改這一頁就變成無樣式而仍回 200 #}
+  <link rel="stylesheet" href="{{ base_path }}/assets/vendor/bootstrap.min.css">
   <style nonce="{{ request.state.csp_nonce }}">
     :root { color-scheme: light; }
     body { background: #f6f7f9; }

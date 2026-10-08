@@ -20,8 +20,12 @@ import re
 
 from tests.conftest import ROOT, _login
 
-# 模板裡的靜態資源引用長這樣:href="/inbox/assets/vendor/bootstrap.min.css"
-_ASSET_RE = re.compile(r'(?:href|src)="(/inbox/assets/[^"]+)"')
+# 模板裡的靜態資源引用長這樣:href="{{ base_path }}/assets/vendor/bootstrap.min.css"
+# ⚠ T08b(2026-10-08)起路徑一律用 `{{ base_path }}` 組,不寫死 `/inbox/`;
+#   本檔把 `{{ base_path }}` 正規化成測試環境的 `/inbox` 再去打(測試環境 base_path = /inbox)。
+#   寫死的舊形狀仍接受 —— 它不是錯的 URL,只是 `tests/test_templates_bootstrap.py` 另外禁止。
+_ASSET_RE = re.compile(r'(?:href|src)="((?:/inbox|\{\{\s*base_path\s*\}\})/assets/[^"]+)"')
+_BASE_PATH_RE = re.compile(r"\{\{\s*base_path\s*\}\}")
 
 
 def _referenced_assets() -> set[str]:
@@ -34,7 +38,8 @@ def _referenced_assets() -> set[str]:
     """
     urls: set[str] = set()
     for path in sorted((ROOT / "app/templates").glob("*.html")):
-        urls |= set(_ASSET_RE.findall(path.read_text(encoding="utf-8")))
+        for url in _ASSET_RE.findall(path.read_text(encoding="utf-8")):
+            urls.add(_BASE_PATH_RE.sub("/inbox", url))
     return urls
 
 

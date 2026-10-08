@@ -1,75 +1,100 @@
-{# 角色後台(T05)。零外部資源、light 寫死。
-   🔴 這是唯一顯示 display_name 的地方(契約 §4.2a L1:僅供管理後台顯示),
-      且必須顯示**資料時間**——過期不隱藏而是標示(L1 第 3 條)。
+{# 角色後台(T05;T08b 改用本地 Bootstrap 5)。需 `admin` 能力。
+
    🔴 **每一個 `<form>` 都必須帶 `csrf_token` 的 hidden input**(T10b)。
-      後端由 `Depends(require_csrf)` 驗;模板忘了放的症狀是
-      **那個按鈕從此無效**,而它回 403 —— 看起來像權限問題,會查錯方向。
-      守門:`tests/test_csrf.py::test_admin_page_has_csrf_in_every_form`
-      (它抓出頁面上每一個 `<form>` 逐一檢查,新表單自動被涵蓋)。 #}
+      少了它後端一律 403,症狀像「後台壞了」;`tests/test_csrf.py` 是列舉式守門
+      (它抓出頁面上每一個 `<form>` 逐一檢查,新表單自動被涵蓋)。
+
+   🔴 樣式只來自同源的 `{{ base_path }}/assets/vendor/bootstrap.min.css`(契約 §4.10 禁外部 CDN),
+      路徑用 `base_path` 組、不寫死 `/inbox/`;`<style>` 帶逐請求 nonce;
+      **`style="…"` 屬性一律不可用**(nonce 對屬性無效,症狀是版面走鐘且伺服器零錯誤)。
+
+   🔴 表格包在 `.table-responsive` 裡:sub 是 36 字元、角色欄有四個,手機寬(390px)
+      原本整頁橫向捲動(2026-10-08 實測 scrollWidth 524);包起來之後只有表格自己捲。
+      `tests/test_templates_bootstrap.py` 釘住。
+
+   🔴 零 JavaScript(CSP 無 `script-src`),所以不用 Bootstrap 的 JS 元件。 #}
 <!doctype html>
 <html lang="zh-Hant">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>角色後台 — 站內信</title>
+  <link rel="stylesheet" href="{{ base_path }}/assets/vendor/bootstrap.min.css">
   <style nonce="{{ request.state.csp_nonce }}">
     :root { color-scheme: light; }
-    body { margin:0; padding:2rem; background:#f6f7f9; color:#1f2328;
-           font-family: system-ui, -apple-system, "Segoe UI", "Noto Sans TC", sans-serif; }
-    h1 { font-size:1.25rem; margin:0 0 .25rem; }
-    .note { color:#57606a; font-size:.9rem; margin:0 0 1.5rem; line-height:1.6; }
-    table { border-collapse:collapse; background:#fff; width:100%;
-            border:1px solid #d8dee4; border-radius:6px; overflow:hidden; }
-    th, td { text-align:left; padding:.6rem .75rem; border-bottom:1px solid #eaeef2;
-             font-size:.92rem; vertical-align:top; }
-    th { background:#f6f8fa; font-weight:600; }
-    tr:last-child td { border-bottom:none; }
-    code { font-size:.85rem; word-break:break-all; }
-    .off { color:#8b949e; }
-    button { font-size:.85rem; padding:.15rem .5rem; cursor:pointer; }
-    form.inline { display:inline; }
-    .stamp { color:#8b949e; font-size:.8rem; display:block; }
+    body { background: #f6f7f9; }
+    .page-wide { max-width: 64rem; }
+    .fs-tiny { font-size: .75rem; }
+    /* sub 在表格裡刻意**不折行**:36 字元逐字折行會變成一條直的數字柱(2026-10-08 手機寬實測);
+       寬度不夠時由外層 .table-responsive 讓表格自己橫向捲,整頁不捲。 */
+    .sub-code { white-space: nowrap; }
   </style>
 </head>
-<body>
-  <h1>角色後台</h1>
-  <p class="note">
-    自動授 <code>reader</code>:{% if auto_grant_reader %}<strong>開啟</strong>{% else %}<strong>關閉</strong>(portal 已撤回核可,或本地刻意關閉){% endif %}。
-    <br>顯示名稱僅為快取副本,非真相來源;真相在 Keycloak。空白表示沒有快取值(不即時查 IdP)。
-  </p>
-  <table>
-    <tr>
-      <th>sub</th><th>顯示名稱(快取)</th>
-      {% for r in all_roles %}<th>{{ r }}</th>{% endfor %}
-    </tr>
-    {% for row in rows %}
-    <tr>
-      <td><code>{{ row.sub }}</code>{% if not row.is_active %} <span class="off">(帳號已停用)</span>{% endif %}</td>
-      <td>
-        {{ row.display_name }}
-        {# 🔴 資料時間必須顯示,過期不隱藏而是標示(§4.2a L1 第 3 條)#}
-        <span class="stamp">更新於 {{ row.display_name_updated_at or "—" }}</span>
-      </td>
-      {% for r in all_roles %}
-      <td>
-        {% set on = row.roles.get(r, False) %}
-        <form class="inline" method="post" action="{{ base_path }}/admin/users/roles">
-          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-          <input type="hidden" name="sub" value="{{ row.sub }}">
-          <input type="hidden" name="role" value="{{ r }}">
-          <input type="hidden" name="enabled" value="{{ '0' if on else '1' }}">
-          <button type="submit">{{ '停用' if on else '啟用' }}</button>
-        </form>
-        {% if not on %}<span class="off">off</span>{% endif %}
-      </td>
-      {% endfor %}
-    </tr>
-    {% endfor %}
-  </table>
-  <form class="mt-4" method="post" action="{{ base_path }}/admin/users/purge-display-names">
-    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-    <input type="text" name="sub" placeholder="sub(留空=整批)" size="40">
-    <button type="submit">清除顯示名稱快取</button>
-  </form>
+<body class="text-body">
+  <main class="container py-4 page-wide">
+
+    <header class="d-flex align-items-center justify-content-between mb-3">
+      <h1 class="h4 mb-0">角色後台</h1>
+      <div class="d-flex gap-2">
+        <a class="btn btn-outline-secondary btn-sm" href="{{ base_path }}/">回收件匣</a>
+        <a class="btn btn-outline-secondary btn-sm" href="{{ base_path }}/logout">登出</a>
+      </div>
+    </header>
+
+    <p class="text-secondary small mb-3">
+      自動授 <code>reader</code>:{% if auto_grant_reader %}<strong>開啟</strong>{% else %}<strong>關閉</strong>(portal 已撤回核可,或本地刻意關閉){% endif %}。
+      <br>顯示名稱僅為快取副本,非真相來源;真相在 Keycloak。空白表示沒有快取值(不即時查 IdP)。
+    </p>
+
+    <div class="table-responsive">
+      <table class="table table-sm table-hover align-middle bg-white border mb-3">
+        <thead class="table-light">
+          <tr>
+            <th>sub</th><th>顯示名稱(快取)</th>
+            {% for r in all_roles %}<th>{{ r }}</th>{% endfor %}
+          </tr>
+        </thead>
+        <tbody>
+        {% for row in rows %}
+          <tr>
+            <td>
+              <code class="sub-code">{{ row.sub }}</code>
+              {% if not row.is_active %}<span class="badge text-bg-secondary ms-1">帳號已停用</span>{% endif %}
+            </td>
+            <td>
+              {{ row.display_name }}
+              {# 🔴 資料時間必須顯示,過期不隱藏而是標示(§4.2a L1 第 3 條)#}
+              <span class="d-block text-secondary fs-tiny">更新於 {{ row.display_name_updated_at or "—" }}</span>
+            </td>
+            {% for r in all_roles %}
+            <td class="text-nowrap">
+              {% set on = row.roles.get(r, False) %}
+              <form class="d-inline" method="post" action="{{ base_path }}/admin/users/roles">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                <input type="hidden" name="sub" value="{{ row.sub }}">
+                <input type="hidden" name="role" value="{{ r }}">
+                <input type="hidden" name="enabled" value="{{ '0' if on else '1' }}">
+                <button type="submit" class="btn btn-sm {{ 'btn-outline-danger' if on else 'btn-outline-primary' }}">{{ '停用' if on else '啟用' }}</button>
+              </form>
+              {% if on %}<span class="badge text-bg-success ms-1">on</span>{% else %}<span class="text-secondary small ms-1">off</span>{% endif %}
+            </td>
+            {% endfor %}
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+
+    <form class="row g-2 align-items-center" method="post" action="{{ base_path }}/admin/users/purge-display-names">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <div class="col-sm-7 col-md-5">
+        <input class="form-control form-control-sm" type="text" name="sub" placeholder="sub(留空=整批)">
+      </div>
+      <div class="col-auto">
+        <button type="submit" class="btn btn-sm btn-outline-secondary">清除顯示名稱快取</button>
+      </div>
+    </form>
+
+  </main>
 </body>
 </html>
