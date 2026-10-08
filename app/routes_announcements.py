@@ -26,13 +26,12 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
 
 from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
-from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, ConfigDict
 
+from app.templating import make_templates, nav_context
 from app.authz import (
     CAP_PUBLISH_ANNOUNCEMENT,
     CAP_READ_OWN,
@@ -316,9 +315,10 @@ def build_publish_page_router(*, settings) -> APIRouter:
        `<form>` 一出現,任何網站都能指向我方端點。
     """
     router = APIRouter(tags=["announcements-ui"])
-    templates = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
+    # T08c:共用的模板環境(`taipei` 過濾器只在 app/templating.py 登記一次)
+    templates = make_templates()
 
-    def _render(request, *, sub: str, form: dict, error: str | None, status: int = 200):
+    def _render(request, *, sub: str, roles, form: dict, error: str | None, status: int = 200):
         """算繪表單。
 
         🔴 `form` 一律回填使用者剛才填的值。清空表單等於叫他重打一次,
@@ -336,6 +336,8 @@ def build_publish_page_router(*, settings) -> APIRouter:
                 "error": error,
                 # 🔴 顯示本人的 `sub` 而非姓名(§4.2a L1、DI-3 未裁決)
                 "sub": sub,
+                # T08c:導覽列依能力顯示入口
+                **nav_context(roles, active="publish"),
             },
             headers={"Cache-Control": "no-store"},
         )
@@ -352,8 +354,8 @@ def build_publish_page_router(*, settings) -> APIRouter:
         能力: `publish_announcement` —— **`reader` 得到 403,不是 200 空表單**。
         🔴 回 200 空表單的話,他填完送出才被拒,而白費的那次輸入不會回來。
         """
-        sub, _roles = identity
-        return _render(request, sub=sub, form=dict(_EMPTY), error=None)
+        sub, roles = identity
+        return _render(request, sub=sub, roles=roles, form=dict(_EMPTY), error=None)
 
     @router.post("/announcements/new", include_in_schema=False)
     def submit(
@@ -377,7 +379,7 @@ def build_publish_page_router(*, settings) -> APIRouter:
         🔴 為什麼成功是 **303 而不是 200**:POST 之後留在 POST 的結果頁上,
            使用者按重新整理就會**再發一則**。303 讓瀏覽器改用 GET 重新載入。
         """
-        sub, _roles = identity
+        sub, roles = identity
         # 🔴 CSRF 由 `Depends(require_csrf)` 在**進到這裡之前**驗完(T10b)。
         #    原本寫在這裡的手動比對已移除 —— 手寫的版本只保護了「有人想到的」
         #    那個表單,而角色後台那兩個從 T05 就沒有(見 T10b dev-log)。
@@ -396,7 +398,7 @@ def build_publish_page_router(*, settings) -> APIRouter:
             # ⚠ 共用的驗證函式用**欄位名**(`title` / `starts_at`)寫訊息 —— 那是給
             #   API 呼叫方看的。這一頁的讀者是人,所以在這裡換成欄位的中文標籤;
             #   不在共用函式裡改,否則 API 的錯誤訊息會變成人話而機器不好比對。
-            return _render(request, sub=sub, form=filled,
+            return _render(request, sub=sub, roles=roles, form=filled,
                            error=_humanize(exc.detail), status=400)
 
         log_event("announcement_published", sub=sub, announcement_id=announcement_id,

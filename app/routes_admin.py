@@ -13,12 +13,11 @@
 
 from __future__ import annotations
 
-from pathlib import Path
 
 from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
-from fastapi.templating import Jinja2Templates
 
+from app.templating import make_templates, nav_context
 from app.authz import ALL_ROLES, CAP_MANAGE_ROLES, ROLE_READER, require_capability
 from app.csrf import csrf_token_for, require_csrf
 from app.db import session_scope
@@ -34,7 +33,8 @@ def build_admin_router(*, settings) -> APIRouter:
     副作用: 無(只組 router)
     """
     router = APIRouter(prefix="/admin", tags=["admin"])
-    templates = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
+    # T08c:共用的模板環境(`taipei` 過濾器只在 app/templating.py 登記一次)
+    templates = make_templates()
 
     @router.get("/users", response_class=HTMLResponse, include_in_schema=False)
     def users(request: Request, identity=Depends(require_capability(CAP_MANAGE_ROLES))):
@@ -44,6 +44,7 @@ def build_admin_router(*, settings) -> APIRouter:
         副作用: 讀資料庫
         錯誤: 未登入 → 401;非 admin → 403
         """
+        sub, roles = identity
         with session_scope() as db:
             rows = []
             for user in db.query(AppUser).order_by(AppUser.created_at).all():
@@ -65,6 +66,9 @@ def build_admin_router(*, settings) -> APIRouter:
                 "all_roles": ALL_ROLES,
                 "base_path": settings.base_path,
                 "auto_grant_reader": settings.auto_grant_reader,
+                # T08c:頁尾顯示本人 sub(零人名)、導覽列依能力顯示入口
+                "sub": sub,
+                **nav_context(roles, active="admin"),
                 # 🔴 T10b:這一頁的兩個表單都要帶 CSRF token。
                 #    後端驗了而模板忘了放,症狀是**那個按鈕從此無效**,
                 #    而它回 403 —— 看起來像權限問題,查錯方向。

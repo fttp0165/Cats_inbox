@@ -1,54 +1,46 @@
-{# 角色後台(T05;T08b 改用本地 Bootstrap 5)。需 `admin` 能力。
+{# 角色後台(T05;T08c 改用共用版面)。需 `admin` 能力。
 
    🔴 **每一個 `<form>` 都必須帶 `csrf_token` 的 hidden input**(T10b)。
       少了它後端一律 403,症狀像「後台壞了」;`tests/test_csrf.py` 是列舉式守門
       (它抓出頁面上每一個 `<form>` 逐一檢查,新表單自動被涵蓋)。
 
-   🔴 樣式只來自同源的 `{{ base_path }}/assets/vendor/bootstrap.min.css`(契約 §4.10 禁外部 CDN),
-      路徑用 `base_path` 組、不寫死 `/inbox/`;`<style>` 帶逐請求 nonce;
-      **`style="…"` 屬性一律不可用**(nonce 對屬性無效,症狀是版面走鐘且伺服器零錯誤)。
-
    🔴 表格包在 `.table-responsive` 裡:sub 是 36 字元、角色欄有四個,手機寬(390px)
       原本整頁橫向捲動(2026-10-08 實測 scrollWidth 524);包起來之後只有表格自己捲。
       `tests/test_templates_bootstrap.py` 釘住。
 
-   🔴 零 JavaScript(CSP 無 `script-src`),所以不用 Bootstrap 的 JS 元件。 #}
-<!doctype html>
-<html lang="zh-Hant">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>角色後台 — 站內信</title>
-  <link rel="stylesheet" href="{{ base_path }}/assets/vendor/bootstrap.min.css">
-  <style nonce="{{ request.state.csp_nonce }}">
-    :root { color-scheme: light; }
-    body { background: #f6f7f9; }
-    .page-wide { max-width: 64rem; }
-    .fs-tiny { font-size: .75rem; }
-    /* sub 在表格裡刻意**不折行**:36 字元逐字折行會變成一條直的數字柱(2026-10-08 手機寬實測);
-       寬度不夠時由外層 .table-responsive 讓表格自己橫向捲,整頁不捲。 */
-    .sub-code { white-space: nowrap; }
-  </style>
-</head>
-<body class="text-body">
-  <main class="container py-4 page-wide">
+   🔴 零 JavaScript(CSP 無 `script-src`),所以角色開關是**純表單**(POST + CSRF),不是 JS 切換。
+   ⚠ 樣式只能加 class;`style="…"` 屬性會被 CSP 擋掉(T10)。 #}
+{% extends "layout/base.html" %}
+{% import "layout/icons.html" as icons %}
+{% block title %}角色後台{% endblock %}
+{% block main_class %}page-wide{% endblock %}
+{% block content %}
 
-    <header class="d-flex align-items-center justify-content-between mb-3">
-      <h1 class="h4 mb-0">角色後台</h1>
-      <div class="d-flex gap-2">
-        <a class="btn btn-outline-secondary btn-sm" href="{{ base_path }}/">回收件匣</a>
-        <a class="btn btn-outline-secondary btn-sm" href="{{ base_path }}/logout">登出</a>
-      </div>
-    </header>
+  <header class="page-head">
+    <div>
+      <h1 class="page-title">角色後台</h1>
+      <p class="page-sub">
+        <span>共 {{ rows|length }} 位使用者</span>
+        <span class="pill {{ 'pill-green' if auto_grant_reader else 'pill-amber' }}">
+          自動授 reader:{{ '開啟' if auto_grant_reader else '關閉' }}
+        </span>
+      </p>
+    </div>
+  </header>
 
-    <p class="text-secondary small mb-3">
-      自動授 <code>reader</code>:{% if auto_grant_reader %}<strong>開啟</strong>{% else %}<strong>關閉</strong>(portal 已撤回核可,或本地刻意關閉){% endif %}。
-      <br>顯示名稱僅為快取副本,非真相來源;真相在 Keycloak。空白表示沒有快取值(不即時查 IdP)。
-    </p>
+  <div class="note note-quiet mb-3">
+    {{ icons.icon("info", 16) }}
+    <span>
+      {% if not auto_grant_reader %}自動授 <code>reader</code> 已關閉(portal 已撤回核可,或本地刻意關閉);新帳號首登會看到待開通頁。<br>{% endif %}
+      顯示名稱僅為快取副本,非真相來源;真相在 Keycloak。「—」表示沒有快取值(不即時查 IdP)。
+      按一下角色即切換啟用 / 停用。
+    </span>
+  </div>
 
+  <div class="table-card mb-3">
     <div class="table-responsive">
-      <table class="table table-sm table-hover align-middle bg-white border mb-3">
-        <thead class="table-light">
+      <table class="table table-sm table-hover align-middle">
+        <thead>
           <tr>
             <th>sub</th><th>顯示名稱(快取)</th>
             {% for r in all_roles %}<th>{{ r }}</th>{% endfor %}
@@ -59,24 +51,25 @@
           <tr>
             <td>
               <code class="sub-code">{{ row.sub }}</code>
-              {% if not row.is_active %}<span class="badge text-bg-secondary ms-1">帳號已停用</span>{% endif %}
+              {% if not row.is_active %}<span class="pill ms-1">帳號已停用</span>{% endif %}
             </td>
             <td>
               {{ row.display_name }}
-              {# 🔴 資料時間必須顯示,過期不隱藏而是標示(§4.2a L1 第 3 條)#}
-              <span class="d-block text-secondary fs-tiny">更新於 {{ row.display_name_updated_at or "—" }}</span>
+              {# 🔴 資料時間必須顯示,過期不隱藏而是標示(§4.2a L1 第 3 條);台北時間到分 #}
+              <span class="d-block msg-time">{{ icons.icon("clock", 12) }}更新於 {{ row.display_name_updated_at|taipei }}</span>
             </td>
             {% for r in all_roles %}
-            <td class="text-nowrap">
+            <td class="role-cell">
               {% set on = row.roles.get(r, False) %}
               <form class="d-inline" method="post" action="{{ base_path }}/admin/users/roles">
                 <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
                 <input type="hidden" name="sub" value="{{ row.sub }}">
                 <input type="hidden" name="role" value="{{ r }}">
                 <input type="hidden" name="enabled" value="{{ '0' if on else '1' }}">
-                <button type="submit" class="btn btn-sm {{ 'btn-outline-danger' if on else 'btn-outline-primary' }}">{{ '停用' if on else '啟用' }}</button>
+                {# 按鈕文字是**現在的狀態**;hover 時才變成要做的動作(停用變紅) #}
+                <button type="submit" class="role-toggle {{ 'is-on' if on else 'is-off' }}"
+                        title="{{ '點一下停用 ' ~ r if on else '點一下啟用 ' ~ r }}">{{ '已啟用' if on else '未啟用' }}</button>
               </form>
-              {% if on %}<span class="badge text-bg-success ms-1">on</span>{% else %}<span class="text-secondary small ms-1">off</span>{% endif %}
             </td>
             {% endfor %}
           </tr>
@@ -84,17 +77,16 @@
         </tbody>
       </table>
     </div>
-
-    <form class="row g-2 align-items-center" method="post" action="{{ base_path }}/admin/users/purge-display-names">
+    <form class="table-foot row g-2 align-items-center" method="post" action="{{ base_path }}/admin/users/purge-display-names">
       <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
       <div class="col-sm-7 col-md-5">
-        <input class="form-control form-control-sm" type="text" name="sub" placeholder="sub(留空=整批)">
+        <input class="form-control form-control-sm" type="text" name="sub" placeholder="sub(留空 = 整批清除)">
       </div>
       <div class="col-auto">
-        <button type="submit" class="btn btn-sm btn-outline-secondary">清除顯示名稱快取</button>
+        <button type="submit" class="btn btn-sm btn-outline-secondary btn-ghost">清除顯示名稱快取</button>
       </div>
+      <div class="col-12 col-md form-text m-0">契約 §4.2a L1 第 7 條要求的整批清除工具。</div>
     </form>
+  </div>
 
-  </main>
-</body>
-</html>
+{% endblock %}

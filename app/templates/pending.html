@@ -1,39 +1,28 @@
-{# 待開通頁(T05;T08b 改用本地 Bootstrap 5)。契約 §4.3 的雞生蛋解法:顯示本人 sub 供自助取得。
-   🔴 零外部資源(§4.10 禁外部 CDN):樣式只來自同源的 `{{ base_path }}/assets/vendor/bootstrap.min.css`;
-      light 寫死(憲法第四條 1/2)。
-   🔴 嚴格 CSP(T10 已落地):<style> 帶逐請求 nonce;style="…" 屬性一律不可用。
+{# 待開通頁(T05;T08c 改用共用版面)。契約 §4.3 的雞生蛋解法:顯示本人 sub 供自助取得。
    🔴 不得把 Markdown 寫進模板:2026-10-08 檢視時「本系統**不會**保存」的星號原樣印在畫面上
-      (與 portal PA-23 同型),強調一律用 <strong>;`tests/test_templates_bootstrap.py` 釘住。 #}
-<!doctype html>
-<html lang="zh-Hant">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>待開通 — 站內信</title>
-  <link rel="stylesheet" href="{{ base_path }}/assets/vendor/bootstrap.min.css">
-  <style nonce="{{ request.state.csp_nonce }}">
-    :root { color-scheme: light; }
-    body { background: #f6f7f9; }
-    .card-narrow { max-width: 34rem; }
-    .sub-code { word-break: break-all; font-size: .95rem; }
-  </style>
-</head>
-<body class="text-body">
-  <main class="container min-vh-100 d-flex align-items-center justify-content-center py-4">
-    <div class="card card-narrow w-100 shadow-sm">
-      <div class="card-body p-4">
-        <h1 class="h5 mb-3">你的帳號尚未開通</h1>
-        <p class="text-secondary">你已成功登入,但目前沒有可用的功能權限。請把下面這串識別碼交給管理員開通:</p>
-        {# 🔴 顯示本人的 sub —— 契約 §4.3 建議的雞生蛋解法。
-           少了這一半,第一個使用者會卡在一個看不出下一步是什麼的 403。#}
-        <code class="d-block bg-light border rounded px-3 py-2 mb-3 sub-code">{{ sub }}</code>
-        <ul class="text-secondary small mb-3">
-          <li>這串是你在統一入口的身分識別碼,不是密碼,可以安全地貼給管理員。</li>
-          <li>本系統<strong>不會</strong>保存你的姓名、信箱或密碼。</li>
-        </ul>
-        <a class="btn btn-outline-secondary btn-sm" href="{{ base_path }}/logout">登出</a>
-      </div>
+      (與 portal PA-23 同型),強調一律用 <strong>;`tests/test_templates_bootstrap.py` 釘住。
+   ⚠ 這個人沒有 `read_own` 能力,所以導覽列不會有「收件匣」(點了是 403);只有回入口與登出。 #}
+{% extends "layout/base.html" %}
+{% import "layout/icons.html" as icons %}
+{% block title %}待開通{% endblock %}
+{% block main_class %}page-center{% endblock %}
+{% block content %}
+
+  <div class="hero-card">
+    <div class="hero-icon is-amber">{{ icons.icon("lock", 28) }}</div>
+    <h1>你的帳號尚未開通</h1>
+    <p>你已成功登入,但目前沒有可用的功能權限。請把下面這串識別碼交給管理員開通:</p>
+    {# 🔴 顯示本人的 sub —— 契約 §4.3 建議的雞生蛋解法。
+       少了這一半,第一個使用者會卡在一個看不出下一步是什麼的 403。#}
+    <code class="hero-sub">{{ sub }}</code>
+    <ul class="hero-list">
+      <li>這串是你在統一入口的身分識別碼,不是密碼,可以安全地貼給管理員。</li>
+      <li>本系統<strong>不會</strong>保存你的姓名、信箱或密碼。</li>
+    </ul>
+    <div class="hero-actions">
+      <a class="btn btn-brand" href="/">{{ icons.icon("home", 16) }} 回統一入口</a>
+      <a class="btn btn-outline-secondary btn-ghost" href="{{ base_path }}/logout">登出</a>
     </div>
-  </main>
-</body>
-</html>
+  </div>
+
+{% endblock %}

@@ -1,0 +1,79 @@
+{# 共用版面(T08c)。五個頁面模板一律 `{% extends "layout/base.html" %}`,只寫內容。
+
+   🔴 **head / 導覽列 / 頁尾只在這裡維護一次。** T08b 之前五頁各自一份 `<head>`,
+      結果是路徑寫死、樣式各自為政;portal 反覆記過「兩份必然漂移」。
+      守門:`tests/test_ui_design.py::test_page_templates_extend_the_shared_layout`。
+
+   🔴 **零外部資源**(契約 §4.10 禁外部 CDN):Bootstrap 5.3.8 與 `app.css` 都是同源
+      `{{ base_path }}/assets/…`;路徑用 `base_path` 組,不寫死 `/inbox/`。
+      ⚠ 檔案必須在 `StaticFiles` 掛載的目錄底下(portal 2026-08-03:檔案在、路徑對、app 不送,
+      症狀是整頁沒樣式而伺服器零錯誤);守門在 `tests/test_static.py`。
+   🔴 **嚴格 CSP(T10)**:`<style>` 帶逐請求 nonce;**`style="…"` 屬性一律不可用**
+      (nonce 對屬性無效,症狀是版面走鐘且伺服器零錯誤);零 `<script>`(CSP 無 `script-src`,
+      會被靜默擋掉);`font-src 'self'` 所以不載網路字型,用系統字型堆疊(見 app.css)。
+   🔴 light 主題寫死,不做 `prefers-color-scheme` 深色切換(憲法第四條 1/2)。
+
+   🔴 **導覽列只顯示這個人真的有能力的入口**(`can_read` / `can_publish` / `can_admin`,
+      由 `app/templating.py::nav_context` 從角色算出):顯示一個點下去會 403 的連結比不顯示更糟。
+   🔴 **全站零人名**(契約 §4.2a L1、DI-3 未裁決):頁尾顯示本人的 `sub`,不顯示姓名。 #}
+{% import "layout/icons.html" as icons %}
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}站內信{% endblock %} — 站內信</title>
+  <link rel="stylesheet" href="{{ base_path }}/assets/vendor/bootstrap.min.css">
+  <link rel="stylesheet" href="{{ base_path }}/assets/app.css">
+  <style nonce="{{ request.state.csp_nonce }}">
+    :root { color-scheme: light; }
+  </style>
+</head>
+<body class="app-body">
+
+  <nav class="app-nav" aria-label="主選單">
+    <div class="container app-nav-inner">
+      {# 品牌:有收件匣可讀就連回收件匣,否則(待開通 / 已登出)連回統一入口 #}
+      <a class="app-brand" href="{{ base_path ~ '/' if can_read else '/' }}">
+        <span class="app-brand-mark">{{ icons.icon("mail", 18) }}</span>
+        <span class="app-brand-text">站內信</span>
+      </a>
+      <ul class="app-nav-links">
+        {% if can_read %}
+          <li><a class="app-nav-link{{ ' is-active' if nav_active == 'inbox' }}" href="{{ base_path }}/">{{ icons.icon("inbox", 16) }}收件匣</a></li>
+        {% endif %}
+        {% if can_publish %}
+          <li><a class="app-nav-link{{ ' is-active' if nav_active == 'publish' }}" href="{{ base_path }}/announcements/new">{{ icons.icon("bell", 16) }}發布公告</a></li>
+        {% endif %}
+        {% if can_admin %}
+          <li><a class="app-nav-link{{ ' is-active' if nav_active == 'admin' }}" href="{{ base_path }}/admin/users">{{ icons.icon("shield", 16) }}角色後台</a></li>
+        {% endif %}
+        {# 手機寬這兩個只剩圖示(app.css 的 media query 藏掉文字),否則「登出」會被擠出導覽列外要橫向捲才看得到 #}
+        <li><a class="app-nav-link app-nav-link-icon-sm" href="/" title="回統一入口">{{ icons.icon("home", 16) }}<span class="app-nav-label">回入口</span></a></li>
+        {% if sub %}
+          <li><a class="app-nav-link app-nav-link-quiet app-nav-link-icon-sm" href="{{ base_path }}/logout" title="登出">{{ icons.icon("logout", 16) }}<span class="app-nav-label">登出</span></a></li>
+        {% elif login_url %}
+          <li><a class="app-nav-link app-nav-link-quiet app-nav-link-icon-sm" href="{{ login_url }}" title="登入">{{ icons.icon("login", 16) }}<span class="app-nav-label">登入</span></a></li>
+        {% endif %}
+      </ul>
+    </div>
+  </nav>
+
+  <main class="container app-main {% block main_class %}{% endblock %}">
+    {% block content %}{% endblock %}
+  </main>
+
+  <footer class="app-footer">
+    <div class="container app-footer-inner">
+      {% block footer %}
+        {% if sub %}
+          {# 顯示本人的 sub 而非姓名:與待開通頁一致(契約 §4.3),全站零人名(§4.2a L1) #}
+          <span>登入身分:<code class="app-sub">{{ sub }}</code></span>
+        {% endif %}
+      {% endblock %}
+      <span class="app-footer-brand">Sporton 統一入口 · 站內信</span>
+    </div>
+  </footer>
+
+</body>
+</html>

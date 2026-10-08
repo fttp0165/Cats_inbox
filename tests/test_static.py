@@ -37,7 +37,8 @@ def _referenced_assets() -> set[str]:
     pytest,相對路徑會讓這支測試依賴「從哪裡啟動」(T05 踩過)。
     """
     urls: set[str] = set()
-    for path in sorted((ROOT / "app/templates").glob("*.html")):
+    # T08c 起 head 在 `layout/base.html`(子目錄),所以用 rglob —— 用 glob 會掃到 0 個而讓下一支空跑
+    for path in sorted((ROOT / "app/templates").rglob("*.html")):
         for url in _ASSET_RE.findall(path.read_text(encoding="utf-8")):
             urls.add(_BASE_PATH_RE.sub("/inbox", url))
     return urls

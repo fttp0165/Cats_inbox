@@ -348,6 +348,11 @@ def test_form_page_is_csp_clean(app_client, db_session):
     assert "<script" not in r.text, "🔴 CSP 之下腳本會被靜默擋掉,這一頁不得有 JS"
     stripped = re.sub(r"<style\b.*?</style>", "", r.text, flags=re.S)
     assert 'style="' not in stripped, "🔴 有行內樣式屬性,CSP 會把它擋掉"
-    assert "//" not in re.sub(r"https?://catsapp[^\"']*", "", "".join(
-        re.findall(r'(?:src|href)="([^"]*)"', r.text)
-    )), "🔴 有外部資源"
+    # ⚠ T08c 修正斷言本身:原本把所有 URL **串接**後找 `//`,而導覽列的「回入口」是 `href="/"`,
+    #    它接上下一個 `/inbox/…` 就湊出 `//` —— 同站的根路徑被當成外部資源(假陽性)。
+    #    意圖不變(不得有協定相對或絕對網址的外部資源),改成逐一檢查每個 URL。
+    external = [
+        u for u in re.findall(r'(?:src|href)="([^"]*)"', r.text)
+        if (u.startswith("//") or "://" in u) and not u.startswith("https://catsapp.sporton.com.tw")
+    ]
+    assert not external, f"🔴 有外部資源:{external}"

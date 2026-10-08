@@ -14,12 +14,11 @@ from __future__ import annotations
 
 import secrets
 
-from pathlib import Path
 
 from fastapi import APIRouter, Depends, Request, Response
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
-from fastapi.templating import Jinja2Templates
 
+from app.templating import make_templates, nav_context
 from app.oidc import (
     OidcClient,
     OidcError,
@@ -51,7 +50,8 @@ def build_auth_router(*, settings, oidc: OidcClient, store: SessionStore, clock)
     """
     router = APIRouter(tags=["auth"])
     cookie_kwargs = store.cookie_kwargs(settings.base_path)
-    templates = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
+    # T08c:共用的模板環境(`taipei` 過濾器只在 app/templating.py 登記一次)
+    templates = make_templates()
 
     # 🔴 登出後的落地頁,必須是 client 已登記的 post-logout 值之一,**逐字**。
     #    登記的兩個是 `/inbox/` 與 `/inbox/logged-out/`;選後者的理由見
@@ -308,7 +308,8 @@ def build_auth_router(*, settings, oidc: OidcClient, store: SessionStore, clock)
         return templates.TemplateResponse(
             request=request,
             name="pending.html",
-            context={"sub": data.sub, "base_path": settings.base_path},
+            # T08c:待開通的人沒有任何角色 → 導覽列只有回入口與登出(不顯示會 403 的收件匣)
+            context={"sub": data.sub, "base_path": settings.base_path, **nav_context((), active="pending")},
             headers={"Cache-Control": "no-store"},
         )
 

@@ -55,15 +55,24 @@ def test_logged_out_page_links_local_bootstrap(app_client_bootstrap):
 
 
 def test_templates_use_base_path_for_assets():
-    """模板裡的資產路徑一律 `{{ base_path }}/assets/…`,不得寫死 `/inbox/assets/`。"""
+    """模板裡的資產路徑一律 `{{ base_path }}/assets/…`,不得寫死 `/inbox/assets/`。
+
+    ⚠ T08c 起 `<head>` 只在 `layout/base.html` 一份,頁面模板 extends 它 ——
+      所以「有 Bootstrap link」只對版面斷言;頁面模板的斷言改成「必須 extends 版面」
+      (`tests/test_ui_design.py` 另有同名守門,這裡留著是讓本檔自己讀得通)。
+      斷言的意圖不變:樣式只來自同源、路徑用 `base_path`。
+    """
     bad = []
-    for t in sorted(TEMPLATES.glob("*.html")):
-        src = t.read_text(encoding="utf-8")
-        if "/inbox/assets/" in src:
+    for t in sorted(TEMPLATES.rglob("*.html")):
+        if "/inbox/assets/" in t.read_text(encoding="utf-8"):
             bad.append(t.name)
-        if "/assets/vendor/bootstrap.min.css" not in src:
-            bad.append(f"{t.name}(沒有 Bootstrap link)")
-    assert not bad, f"資產路徑寫死或缺 Bootstrap:{bad}"
+    layout = (TEMPLATES / "layout" / "base.html").read_text(encoding="utf-8")
+    if "{{ base_path }}/assets/vendor/bootstrap.min.css" not in layout:
+        bad.append("layout/base.html(沒有 Bootstrap link)")
+    for t in sorted(TEMPLATES.glob("*.html")):
+        if '{% extends "layout/base.html" %}' not in t.read_text(encoding="utf-8"):
+            bad.append(f"{t.name}(沒有 extends 共用版面)")
+    assert not bad, f"資產路徑寫死 / 缺 Bootstrap / 頁面沒 extends:{bad}"
 
 
 @pytest.mark.parametrize("path", PAGES + ["/inbox/logged-out/"])

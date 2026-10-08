@@ -20,17 +20,14 @@
 from __future__ import annotations
 
 import uuid
-from pathlib import Path
 
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import HTMLResponse
-from fastapi.templating import Jinja2Templates
 
+from app.templating import make_templates, nav_context
 from app.authz import (
-    CAP_PUBLISH_ANNOUNCEMENT,
     CAP_READ_OWN,
     Forbidden,
-    has_capability,
     require_capability,
 )
 from app.db import session_scope
@@ -111,7 +108,8 @@ def build_inbox_router(*, settings) -> APIRouter:
     副作用: 無(只組 router)
     """
     router = APIRouter(tags=["inbox"])
-    templates = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
+    # T08c:共用的模板環境(`taipei` 過濾器只在 app/templating.py 登記一次)
+    templates = make_templates()
     api = APIRouter(prefix="/api/v1")
 
     @api.get("/messages")
@@ -201,7 +199,8 @@ def build_inbox_router(*, settings) -> APIRouter:
         # 🔴 只在**真的有能力**時才顯示發布入口(T09b)。
         #    顯示一個點下去會 403 的連結**比不顯示更糟** —— 它讓人以為
         #    自己做錯了什麼,而其實他從來沒有那個權限。
-        can_publish = has_capability(roles, CAP_PUBLISH_ANNOUNCEMENT)
+        #    T08c 起由 `nav_context` 一次算出導覽列要顯示的入口(can_read / can_publish / can_admin)。
+        nav = nav_context(roles, active="inbox")
         with session_scope() as session:
             rows = list_messages(session, recipient_sub=sub)
             items = [_serialize(m) for m in rows]
@@ -220,7 +219,7 @@ def build_inbox_router(*, settings) -> APIRouter:
                 "announcements_unread": sum(
                     1 for a in announcements if not a["is_read"]
                 ),
-                "can_publish": can_publish,
+                **nav,
                 "base_path": settings.base_path,
                 # 🔴 刻意傳 `sub` 而不是姓名:待開通頁已經是這個做法(契約 §4.3),
                 #    而收件匣頁**不顯示任何人名**(§4.2a L1、DI-3 未裁決)。

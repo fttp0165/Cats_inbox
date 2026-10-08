@@ -1,0 +1,36 @@
+{# 內嵌 SVG 圖示(T08c)。零外部資源(契約 §4.10),零 JS;線條用 currentColor 跟著文字色走。
+   用法:{% import "layout/icons.html" as icons %} … {{ icons.icon("mail") }}
+   ⚠ 只能用屬性(width / stroke …),不能用 style="…":CSP 的 nonce 對屬性無效(T10)。 #}
+{% macro icon(name, size=18, cls="") -%}
+<svg class="ico {{ cls }}" width="{{ size }}" height="{{ size }}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+{%- if name == "mail" -%}
+<path d="M4 4h16a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2z"/><polyline points="22,6 12,13 2,6"/>
+{%- elif name == "inbox" -%}
+<polyline points="22 12 16 12 14 15 10 15 8 12 2 12"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/>
+{%- elif name == "bell" -%}
+<path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/>
+{%- elif name == "clock" -%}
+<circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>
+{%- elif name == "shield" -%}
+<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+{%- elif name == "home" -%}
+<path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/>
+{%- elif name == "logout" -%}
+<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/>
+{%- elif name == "login" -%}
+<path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/><polyline points="10 17 15 12 10 7"/><line x1="15" y1="12" x2="3" y2="12"/>
+{%- elif name == "plus" -%}
+<line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
+{%- elif name == "arrow" -%}
+<line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/>
+{%- elif name == "user" -%}
+<path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/>
+{%- elif name == "check" -%}
+<path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/>
+{%- elif name == "lock" -%}
+<rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+{%- elif name == "info" -%}
+<circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/>
+{%- endif -%}
+</svg>
+{%- endmacro %}
