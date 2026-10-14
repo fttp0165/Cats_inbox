@@ -1,8 +1,8 @@
 # cats-inbox 發版 SOP
 
 **建立日期:** 2026-08-25 17:05
-**最後更新:** 2026-08-29 01:45
-**版本:** v1.5
+**最後更新:** 2026-10-14 18:55
+**版本:** v1.6
 **適用範圍:** cats-inbox 的每一次發版(打 tag → 建映像 → VM 換版)
 **權威依據:** 憲法**第八條**(發版儀式)+ 平台紅線(不用 `latest`、不在正式機建置)
 
@@ -21,8 +21,8 @@
 |---|---|
 | `release-image.yml` 的三道一致性檢查 | ✅ **已跑過兩次**(`#1` 2026-08-26 79 秒、`#2` 2026-08-27 60 秒,皆 8 步全過) |
 | 映像推上 GHCR | ✅ **已推兩版** —— `0.1.0`(`release-image #1`,79 秒)與 **`0.1.1`**(`#2`,60 秒);`tags/list` 回 `["0.1.0","0.1.1"]`,**沒有 `latest`** |
-| VM 上 `docker compose up -d` | ⏳ **尚未**(`/opt/cats-inbox` 尚不存在,**T11b**;指令稿見 `docs/T11b上線指令稿.md`) |
-| gateway 路由與 reload | ⏳ **尚未** —— 設定**已入庫但整段是註解**(T11a ✅);啟用是 **T11b** |
+| VM 上 `docker compose up -d` | ✅ **已跑過**(T11b A/B 段,2026-08-29:`/opt/cats-inbox` 建好、兩個容器 healthy、`alembic current` = `0002 (head)`) |
+| gateway 路由與 reload | ✅ **已套用**(T11b D 段,2026-10-08 16:25:portal `gateway-apply.sh` 12 條全通,`/inbox/health` 經 gateway 回 `0.1.1`) |
 
 ⚠ 前兩列在 T10c 當時都是 ⏳,而 **Benny 2026-08-26 19:28 推 `v0.1.0` 之後 82 秒
 它們就變成假的** —— 回寫紀錄見 `docs/dev-logs/2026-08-26_D03_首次發版實測與回寫.md`。
@@ -69,6 +69,12 @@ bash tests/run_all.sh
 ---
 
 ## 2. 打 tag(在**開發者本機**或 **GitHub UI**)
+
+⚠ **實際上 `v0.1.0` / `v0.1.1` 的 tag 都打在開發分支上**(Release 頁的 Target 是
+`claude/cats-inbox-development-plan-ghwd9s`),`main` 停在 PR #1(2026-08-15)。`v0.1.2` 沿用,
+Target 為 `claude/magical-carson-2vn1ns`。**要不要把發版基準改回 `main`(先併回再打 tag)是待 Benny 決定的事**,
+本節的「分支 main」字樣先不改 —— 改了等於宣稱做過。
+💡 **GitHub UI 建 Release 時一次建 tag**(指令稿第 0 步)比本機推 tag 再補 Release 更對:沒有裸 tag 的空窗。
 
 > 🖥️ **在哪執行:** WSL(Ubuntu)· 工作目錄 ~/Cats_inbox · 分支 main
 
@@ -145,7 +151,8 @@ curl -s -H "Authorization: Bearer $TOK" https://ghcr.io/v2/fttp0165/cats-inbox-a
 
 ## 4. VM 換版(在 **CATS VM**)
 
-⚠ **這一節在 T11b 完成前都用不到**(`/opt/cats-inbox` 尚不存在)。**首次上線走 `docs/T11b上線指令稿.md`**,本節是之後每次換版用的。
+✅ **T11b 已完成(容器 2026-08-29、路由 2026-10-08),本節自 `v0.1.2`(2026-10-14)起第一次真的使用。** 首次上線是走 `docs/T11b上線指令稿.md`;本節是之後每次換版用的。
+🔴 **容器重建後 session 全部清空**(session 在記憶體裡)—— 換版等於把所有人登出一次,要挑人少的時候。
 
 ✅ **VM 端不需要 `docker login ghcr.io`。** 2026-08-26 實測:以**匿名** token 打
 `ghcr.io/v2/fttp0165/cats-inbox-api/manifests/0.1.0` 回 **HTTP 200**(repo 為 public,
@@ -243,6 +250,7 @@ sudo docker exec cats-inbox-pg psql -U cats_inbox -d cats_inbox -c '\dt'
 
 | 版本 | 日期 | 修改人 | 摘要 |
 |---|---|---|---|
+| v1.6 | 2026-10-14 | Benny | **§0 後兩列 ⏳ → ✅**(D06;第二條5):VM 部署 2026-08-29、gateway 路由 2026-10-08 早就完成,SOP 停在 08-29 的狀態 46 天。§2 補一段**tag 實際打在開發分支**的事實(`v0.1.0`/`v0.1.1` 皆然,`main` 停在 PR #1),並明寫「改回 main」是待決、「分支 main」字樣先不改;§4 導言改「本節自 `v0.1.2` 起第一次使用」並補**換版 = 所有人登出一次**(session 在記憶體裡)|
 | v1.5 | 2026-08-29 | Benny | **§3 補一段:「CI 綠燈」自 T05b 起才包含那 13 項**(第二條5)。在那之前 `ci.yml` 沒有 PostgreSQL,`test_migration.py`+`test_schema.py` 共 13 支在 CI 上**整批 skip** ——於是本 SOP 要求寫進 Release 頁的「**CI 綠燈狀態**」與「全部測試跑過」是**兩件事**,而 §1 第 ③ 步(要起本機 PG)才是讓它們合起來的那一步、**且靠人記得**。現在 CI 有 `postgres:15.8-alpine`(與 VM 同一個 tag),兩件事合而為一。⚠ 並標明 `v0.1.0`/`v0.1.1` 兩份 Release 頁的「247 項全綠」**當時為真**,而那 13 項是靠人在本機起 PG 才跑到的 —— 已發布的頁面不改(歷史紀錄) |
 | v1.4 | 2026-08-27 | Benny | **§0 前兩列更新為兩次實測**:三道一致性檢查已跑過 `#1`(79 秒)與 `#2`(60 秒);映像**已推兩版** `0.1.0` 與 `0.1.1`,`tags/list` 回 `["0.1.0","0.1.1"]` **無 `latest`**。⚠ 順帶記一個 SOP 本身的教訓(已落到 `T11b上線指令稿` v1.3):第 2 節「打 tag」與第 3 節「寫 Release」**是兩節**,而走本機路徑的人推完 tag 就會停 —— **裸 tag 的狀態會持續**,而第八條1 明訂不得只推裸 tag。2026-08-27 實測發生過一次 |
 | v1.3 | 2026-08-27 | Benny | **新增 §4.1「migration 在哪裡下」(T10d)**。🔴 本節補的是一個**沒有地方可以下那行指令**的缺口:`0.1.0` 的 `Dockerfile` 只 `COPY app/`,映像裡**沒有 `alembic.ini` 也沒有 `alembic/versions/`**,而 `0.1.0` 的 Release 頁卻明寫「要跑 migration:是 —— `alembic upgrade head`」;應用又刻意不做 `create_all()`、平台紅線禁止在正式機 build —— **三份文件都對,而照 Release 頁做不到**。`0.1.1` 起映像自帶 migration 腳本,本節才成立。三步:先 `pg_dump` 備份(共通紅線,不因「這次沒資料」而豁免)→ `docker exec … alembic upgrade head` → `psql -c '\\dt'` 驗五張表真的在。⚠ 症狀難查的理由一併寫進去:健康檢查刻意不查 DB,所以容器正常啟動、health 200、gateway 套用成功,**第一個真人打開收件匣時才 500** |
