@@ -17,6 +17,7 @@ from pathlib import Path
 from fastapi import APIRouter, FastAPI
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import JSONResponse
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app import __version__
 from app import clock as clock_module
@@ -165,8 +166,47 @@ def create_app(*, transport=None, clock=None) -> FastAPI:
     _assets = Path(__file__).parent / "static" / "assets"
     app.mount(f"{settings.base_path}/assets", StaticFiles(directory=str(_assets)), name="assets")
 
+    # ── T08d:瀏覽器錯誤頁 ─────────────────────────────────────────────
+    # 🔴 2026-10-08 真人冒煙時 Benny 在瀏覽器上看到 `{"error":"forbidden"}` 這種裸 JSON。
+    #    只對**瀏覽器**換成頁面(Accept 含 text/html 且不是 /api/ 路徑);
+    #    🔴 **狀態碼不變**,API 與非瀏覽器呼叫方仍拿 JSON(test_ui_finish 最後一支釘住)。
+    # ⚠ 401 只給「登入」按鈕、**不自動導向 IdP**:深層頁未登入要不要導向是 T12 的決定。
+    from app.templating import make_templates
+
+    _error_templates = make_templates()
+    _ERROR_TEXT = {
+        "not_authenticated": ("請先登入", "你還沒有登入,或登入已過期。"),
+        "forbidden": ("沒有這個功能的權限", "你的帳號目前沒有開通這個功能。把待開通頁上的識別碼交給管理員即可開通。"),
+        "csrf_failed": ("頁面已過期", "這個頁面開太久了(或你在別的分頁重新登入過)。請重新整理後再送出一次。"),
+        "not_found": ("找不到這個頁面", "網址可能打錯了,或這則內容已經不存在。"),
+    }
+
+    def _wants_html(request) -> bool:
+        """這個請求是瀏覽器在看頁面嗎(而不是程式在呼叫 API)。"""
+        return ("text/html" in request.headers.get("accept", "")
+                and "/api/" not in request.url.path)
+
+    def _error_page(request, status: int, code: str):
+        """算繪錯誤頁(狀態碼照舊)。"""
+        title, text = _ERROR_TEXT.get(code, ("發生錯誤", "請稍後再試,或回收件匣。"))
+        return _error_templates.TemplateResponse(
+            request=request, name="error.html", status_code=status,
+            context={"base_path": settings.base_path, "code": code, "status": status,
+                     "title": title, "text": text,
+                     "login_url": f"{settings.base_path}/oidc/login"},
+            headers={"Cache-Control": "no-store"},
+        )
+
+    @app.exception_handler(StarletteHTTPException)
+    def _http_error_handler(request, exc: StarletteHTTPException):
+        """路由不存在等 Starlette 層錯誤:瀏覽器給頁面,其餘維持 FastAPI 預設的 JSON 形狀。"""
+        if exc.status_code == 404 and _wants_html(request):
+            return _error_page(request, 404, "not_found")
+        return JSONResponse({"detail": exc.detail}, status_code=exc.status_code,
+                            headers=getattr(exc, "headers", None))
+
     @app.exception_handler(OidcError)
-    def _oidc_error_handler(_request, exc: OidcError):
+    def _oidc_error_handler(request, exc: OidcError):
         """把 OIDC 錯誤轉成對應狀態碼的 JSON。
 
         🔴 401 與 403 不得混用(契約 §11.5 的分界對登入同樣適用):
@@ -174,6 +214,8 @@ def create_app(*, transport=None, clock=None) -> FastAPI:
            錯誤內容只給代碼,不給細節——細節只進 log,不告訴呼叫方
            「是哪一項不對」(那等於幫攻擊者縮小範圍)。
         """
+        if exc.status_code in (401, 403, 404) and _wants_html(request):
+            return _error_page(request, exc.status_code, exc.code)
         return JSONResponse({"error": exc.code}, status_code=exc.status_code)
 
     return app

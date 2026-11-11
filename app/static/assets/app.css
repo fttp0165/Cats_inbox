@@ -143,6 +143,18 @@ code, .app-sub { font-size: .85em; color: var(--brand-ink); }
 }
 .btn-go:hover { background: var(--brand-ink); color: #fff; }
 
+/* ── T08d:標為已讀(純表單按鈕)────────────────────────────────── */
+.head-actions { display: flex; align-items: center; gap: .5rem; flex-wrap: wrap; }
+.head-actions form, .msg-actions form, .msg-foot form { margin: 0; }
+.msg-actions { display: inline-flex; align-items: center; gap: .5rem; flex-wrap: wrap; }
+.btn-quiet {
+  display: inline-flex; align-items: center; gap: .3rem;
+  padding: .35rem .8rem; border-radius: 999px; font-size: .82rem; font-weight: 600;
+  background: #fff; color: var(--ink-soft); border: 1px solid var(--line); cursor: pointer;
+  transition: background .15s, color .15s, border-color .15s;
+}
+.btn-quiet:hover { background: var(--brand-soft); color: var(--brand-ink); border-color: #c7d8f5; }
+
 /* ── 空狀態 ───────────────────────────────────────────────────────────── */
 .empty-state {
   text-align: center; padding: 3rem 1.5rem; background: var(--surface);

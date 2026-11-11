@@ -21,8 +21,8 @@ from __future__ import annotations
 
 import uuid
 
-from fastapi import APIRouter, Depends, Request
-from fastapi.responses import HTMLResponse
+from fastapi import APIRouter, Depends, Form, Request
+from fastapi.responses import HTMLResponse, RedirectResponse
 
 from app.templating import make_templates, nav_context
 from app.authz import (
@@ -30,16 +30,19 @@ from app.authz import (
     Forbidden,
     require_capability,
 )
+from app.csrf import csrf_token_for, require_csrf
 from app.db import session_scope
 from app.oidc import log_event
 from app.repo import (
     count_unread,
     list_active_announcements,
     list_messages,
+    mark_announcement_read,
     mark_message_read,
 )
 from app.routes_announcements import serialize_announcement
 from app.validation import iso_utc
+from app.oidc import OidcError
 
 
 def _safe_action_url(msg) -> str | None:
@@ -224,8 +227,91 @@ def build_inbox_router(*, settings) -> APIRouter:
                 # 🔴 刻意傳 `sub` 而不是姓名:待開通頁已經是這個做法(契約 §4.3),
                 #    而收件匣頁**不顯示任何人名**(§4.2a L1、DI-3 未裁決)。
                 "sub": sub,
+                # T08d:「標為已讀」表單要帶 CSRF(少了它每一次按都 403,看起來像權限壞了)
+                "csrf_token": csrf_token_for(request),
             },
             headers={"Cache-Control": "no-store"},
         )
+
+    # ── T08d:標為已讀(純表單,零 JS)──────────────────────────────────
+    # 🔴 為什麼要有這三支:標已讀原本只有 JSON API,而頁面零 JS(CSP 無 script-src)
+    #    —— 未讀徽章從畫面上**永遠消不掉**,而 API 回 200、測試全綠。
+    # 🔴 id 走**表單欄位**而不是路徑參數,且形狀不對回 **400 不是 403**:
+    #    `tests/test_csrf.py` 的列舉守門會帶假值 `x` 打每一支表單路由,
+    #    「帶了 token 還 403」會被它判成 CSRF 驗壞了。合法 UUID 但不是自己的才是 403
+    #    (與 API 同一分界:401 沒登入 / 403 沒權限 / 400 請求本身不對)。
+    def _uuid_or_400(value: str, field: str) -> uuid.UUID:
+        """表單 id 轉 UUID;形狀不對 → 400。"""
+        try:
+            return uuid.UUID(value)
+        except ValueError:
+            raise OidcError(400, "invalid_request", f"{field} 不是合法的 id")
+
+    def _back():
+        """303 回收件匣:POST 之後用 GET 重新載入,重新整理不會重送表單。"""
+        return RedirectResponse(f"{settings.base_path}/", status_code=303)
+
+    @router.post("/read/message", include_in_schema=False)
+    def read_message_form(
+        message_id: str = Form(""),
+        _csrf=Depends(require_csrf),
+        identity=Depends(require_capability(CAP_READ_OWN)),
+    ):
+        """把自己的一則訊息標為已讀(冪等)。
+
+        錯誤: CSRF 不符 → 403;id 形狀不對 → 400;不是自己的 → 403(且不寫入)
+        副作用: UPDATE `message.is_read` / `read_at`(與 API 同一個 repo 函式)
+        """
+        sub, _roles = identity
+        mid = _uuid_or_400(message_id, "message_id")
+        with session_scope() as session:
+            if mark_message_read(session, message_id=mid, recipient_sub=sub) is None:
+                raise Forbidden(CAP_READ_OWN)
+        log_event("message_read", sub=sub, message_id=str(mid))
+        return _back()
+
+    @router.post("/read/announcement", include_in_schema=False)
+    def read_announcement_form(
+        announcement_id: str = Form(""),
+        _csrf=Depends(require_csrf),
+        identity=Depends(require_capability(CAP_READ_OWN)),
+    ):
+        """標記自己讀過一則公告(冪等)。
+
+        錯誤: CSRF 不符 → 403;id 形狀不對 → 400;公告不存在 → 404
+        副作用: 首次 INSERT 一列 `announcement_read`(寫入的 user_sub 一律是 token 的 sub)
+        """
+        sub, _roles = identity
+        aid = _uuid_or_400(announcement_id, "announcement_id")
+        with session_scope() as session:
+            if mark_announcement_read(session, announcement_id=aid, user_sub=sub) is None:
+                raise OidcError(404, "not_found", "公告不存在")
+        log_event("announcement_read", sub=sub, announcement_id=str(aid))
+        return _back()
+
+    @router.post("/read/all", include_in_schema=False)
+    def read_all_form(
+        _csrf=Depends(require_csrf),
+        identity=Depends(require_capability(CAP_READ_OWN)),
+        csrf_token: str = Form(""),
+    ):
+        """把自己所有未讀訊息與目前有效的未讀公告標為已讀。
+
+        副作用: 逐則呼叫既有的冪等 repo 函式(只動自己的列;不另寫一條批次 UPDATE,
+                少一條要另外證明「只動自己的」的路徑)
+        ⚠ `csrf_token` 參數只為讓 `tests/test_csrf.py` 的列舉守門認得這是表單路由。
+        """
+        sub, _roles = identity
+        n_msg = n_ann = 0
+        with session_scope() as session:
+            for m in list_messages(session, recipient_sub=sub, unread_only=True, limit=1000):
+                mark_message_read(session, message_id=m.id, recipient_sub=sub)
+                n_msg += 1
+            for a, read in list_active_announcements(session, user_sub=sub):
+                if not read:
+                    mark_announcement_read(session, announcement_id=a.id, user_sub=sub)
+                    n_ann += 1
+        log_event("read_all", sub=sub, messages=n_msg, announcements=n_ann)
+        return _back()
 
     return router

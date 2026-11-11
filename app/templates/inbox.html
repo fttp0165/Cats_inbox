@@ -32,9 +32,18 @@
     </div>
     {# 🔴 只有真的有 `publish_announcement` 能力才顯示(T09b)。
        顯示一個點下去會 403 的連結比不顯示更糟 —— 它讓人以為自己做錯了。 #}
-    {% if can_publish %}
-      <a class="btn-go" href="{{ base_path }}/announcements/new">{{ icons.icon("plus", 16) }}發布公告</a>
-    {% endif %}
+    <div class="head-actions">
+      {# T08d:純表單,零 JS(CSP 無 script-src);🔴 每個 <form> 都要帶 csrf_token #}
+      {% if unread or announcements_unread %}
+        <form method="post" action="{{ base_path }}/read/all">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+          <button type="submit" class="btn-quiet">{{ icons.icon("check", 15) }}全部標為已讀</button>
+        </form>
+      {% endif %}
+      {% if can_publish %}
+        <a class="btn-go" href="{{ base_path }}/announcements/new">{{ icons.icon("plus", 16) }}發布公告</a>
+      {% endif %}
+    </div>
   </header>
 
   {# ── 公告區(T09)────────────────────────────────────────────────
@@ -64,6 +73,13 @@
             <div class="msg-foot">
               <span class="msg-time">{{ icons.icon("clock", 14) }}{{ a.starts_at|taipei }} 起 ·
                 {% if a.ends_at %}{{ a.ends_at|taipei }} 止{% else %}長期有效{% endif %}</span>
+              {% if not a.is_read %}
+                <form method="post" action="{{ base_path }}/read/announcement">
+                  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                  <input type="hidden" name="announcement_id" value="{{ a.id }}">
+                  <button type="submit" class="btn-quiet">{{ icons.icon("check", 14) }}標為已讀</button>
+                </form>
+              {% endif %}
             </div>
           </li>
         {% endfor %}
@@ -92,10 +108,19 @@
             <p class="msg-body">{{ m.body }}</p>
             <div class="msg-foot">
               <span class="msg-time">{{ icons.icon("clock", 14) }}{{ m.created_at|taipei }}</span>
+              <span class="msg-actions">
+              {% if not m.is_read %}
+                <form method="post" action="{{ base_path }}/read/message">
+                  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                  <input type="hidden" name="message_id" value="{{ m.id }}">
+                  <button type="submit" class="btn-quiet">{{ icons.icon("check", 14) }}標為已讀</button>
+                </form>
+              {% endif %}
               {% if m.action_url %}
                 {# action_url 已在**寫入側與輸出側各驗一次**同站白名單(T10);此處不組字串、不用 |safe #}
                 <a class="btn-go" href="{{ m.action_url }}">前往處理{{ icons.icon("arrow", 15) }}</a>
               {% endif %}
+              </span>
             </div>
           </li>
         {% endfor %}

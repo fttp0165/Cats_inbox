@@ -1,0 +1,31 @@
+{# 瀏覽器錯誤頁(T08d)。由 `app/main.py` 的錯誤處理在 **Accept 含 text/html 且非 /api/** 時算繪;
+   🔴 狀態碼照舊(401 / 403 / 404),只換 body —— API 與非瀏覽器呼叫方仍拿 JSON。
+   🔴 401 只給「登入」按鈕、不自動導向 IdP(深層頁未登入要不要導向是 T12 的決定)。
+   ⚠ 這一頁拿不到身分(錯誤處理不查 session),所以導覽列只有「回入口」與「登入」。 #}
+{% extends "layout/base.html" %}
+{% import "layout/icons.html" as icons %}
+{% block title %}{{ title }}{% endblock %}
+{% block main_class %}page-center{% endblock %}
+{% block content %}
+
+  <div class="hero-card">
+    <div class="hero-icon {{ 'is-amber' if status == 403 else '' }}">
+      {{ icons.icon("lock" if status in (401, 403) else "info", 28) }}
+    </div>
+    <h1>{{ title }}</h1>
+    <p>{{ text }}</p>
+    <div class="hero-actions">
+      {% if code == "not_authenticated" %}
+        <a class="btn btn-brand" href="{{ login_url }}">{{ icons.icon("login", 16) }} 登入</a>
+      {% elif code == "forbidden" %}
+        <a class="btn btn-brand" href="{{ base_path }}/pending">{{ icons.icon("user", 16) }} 查看我的識別碼</a>
+        <a class="btn btn-outline-secondary btn-ghost" href="{{ base_path }}/">回收件匣</a>
+      {% else %}
+        <a class="btn btn-brand" href="{{ base_path }}/">{{ icons.icon("inbox", 16) }} 回收件匣</a>
+      {% endif %}
+      <a class="btn btn-outline-secondary btn-ghost" href="/">回統一入口</a>
+    </div>
+    <p class="text-secondary small mt-3 mb-0">錯誤代碼:<code>{{ status }} {{ code }}</code></p>
+  </div>
+
+{% endblock %}
