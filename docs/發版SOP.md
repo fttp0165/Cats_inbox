@@ -1,8 +1,8 @@
 # cats-inbox 發版 SOP
 
 **建立日期:** 2026-08-25 17:05
-**最後更新:** 2026-11-11 17:45
-**版本:** v1.7
+**最後更新:** 2026-11-11 18:20
+**版本:** v1.8
 **適用範圍:** cats-inbox 的每一次發版(打 tag → 建映像 → VM 換版)
 **權威依據:** 憲法**第八條**(發版儀式)+ 平台紅線(不用 `latest`、不在正式機建置)
 
@@ -243,7 +243,7 @@ sudo docker exec cats-inbox-pg psql -U cats_inbox -d cats_inbox -c '\dt'
 | 4 | Release 四段都寫了,且未跑過的如實標未跑過 | 讀的人拿它當現況,而它看起來很完整 |
 | 5 | Actions 額度還夠 | 打了 tag 才發現建不出來,而 tag 不能重發 |
 | 6 | 🔴 **Release 頁真的建出來了**(不是「內容寫好了」而是**頁面存在**)| **裸 tag 的狀態會持續**,而第八條1 明訂不得只推裸 tag。⚠ 2026-08-27 實測發生過一次:tag 推成功、CI 綠、映像上了 GHCR,而 Release 頁不存在(API 查回 404)—— 查法:`https://github.com/fttp0165/Cats_inbox/releases/tag/vX.Y.Z` 打不開就是沒建 |
-| 7 | 🔴 **`release-image` 綠,且 GHCR `tags/list` 真的有本版**(第 2 節那段 curl)| **Release 頁存在不等於發版成功。** ⚠ 2026-10-14 `v0.1.2`:Release 頁四段齊,而 Target 預設落在 repo 預設分支,tag 指到常數仍是 `0.1.1` 的舊 commit,`release-image` 第一道檢查失敗、沒有映像 —— **28 天沒人發現**。建 Release 時 Target 一律手選開發分支,並對照 tag 指向的 commit 短碼 |
+| 7 | 🔴 **`release-image` 綠,且 GHCR `tags/list` 真的有本版**(第 2 節那段 curl)| **Release 頁存在不等於發版成功。** ⚠ 2026-10-14 `v0.1.2`:Release 頁四段齊,而 Target 預設落在 repo 預設分支,tag 指到常數仍是 `0.1.1` 的舊 commit,`release-image` 第一道檢查失敗、沒有映像 —— **28 天沒人發現**。建 Release 時 Target 一律手選開發分支,並對照 tag 指向的 commit 短碼。🔴 **`v0.1.3` 手選了照樣錯** —— 改為 tag 一律由命令列 `git tag -a vX.Y.Z <commit>` 指定 commit 推上,Release 頁只選既有 tag |
 
 ---
 
@@ -251,6 +251,7 @@ sudo docker exec cats-inbox-pg psql -U cats_inbox -d cats_inbox -c '\dt'
 
 | 版本 | 日期 | 修改人 | 摘要 |
 |---|---|---|---|
+| v1.8 | 2026-11-11 | Benny | **§5 第 7 項加嚴:tag 一律由命令列指定 commit**。`v0.1.3` 在 UI 上「手選 Target」的提醒下照樣落在預設分支,第二次證明那一格不能靠人記得 |
 | v1.7 | 2026-11-11 | Benny | **§5 新增第 7 項:驗映像真的在 GHCR**。`v0.1.2` 的 Release 頁存在、四段齊,而 tag 指到預設分支上的舊 commit,建置在一致性檢查失敗、沒有映像,28 天沒人發現 —— 第 6 項只驗頁面存在,擋不住這一種 |
 | v1.6 | 2026-10-14 | Benny | **§0 後兩列 ⏳ → ✅**(D06;第二條5):VM 部署 2026-08-29、gateway 路由 2026-10-08 早就完成,SOP 停在 08-29 的狀態 46 天。§2 補一段**tag 實際打在開發分支**的事實(`v0.1.0`/`v0.1.1` 皆然,`main` 停在 PR #1),並明寫「改回 main」是待決、「分支 main」字樣先不改;§4 導言改「本節自 `v0.1.2` 起第一次使用」並補**換版 = 所有人登出一次**(session 在記憶體裡)|
 | v1.5 | 2026-08-29 | Benny | **§3 補一段:「CI 綠燈」自 T05b 起才包含那 13 項**(第二條5)。在那之前 `ci.yml` 沒有 PostgreSQL,`test_migration.py`+`test_schema.py` 共 13 支在 CI 上**整批 skip** ——於是本 SOP 要求寫進 Release 頁的「**CI 綠燈狀態**」與「全部測試跑過」是**兩件事**,而 §1 第 ③ 步(要起本機 PG)才是讓它們合起來的那一步、**且靠人記得**。現在 CI 有 `postgres:15.8-alpine`(與 VM 同一個 tag),兩件事合而為一。⚠ 並標明 `v0.1.0`/`v0.1.1` 兩份 Release 頁的「247 項全綠」**當時為真**,而那 13 項是靠人在本機起 PG 才跑到的 —— 已發布的頁面不改(歷史紀錄) |
